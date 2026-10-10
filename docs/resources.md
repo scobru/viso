@@ -51,6 +51,39 @@ scale down freely. The whoiam UI re-encodes uploads to a square PNG within
 these bounds, but treat dimensions as advisory — a hand-rolled publisher
 may lie, so cap what you render.
 
+## Slot: `ante`
+
+A **proof of commitment** for this persona: evidence its owner spent a
+measurable moment of CPU on it, so apps can tell it from a zero-cost
+throwaway. Content is one CBOR `AnteProof` in the
+[ante](https://github.com/soudasuwa/ante) v0.2.0 wire format, ground and
+signed by the persona's own key.
+
+| rule | value |
+|---|---|
+| `identity_vk` | **must** equal this persona's pubkey |
+| `purpose` | **must** be `whoiam:persona-level:v1` |
+| bits | recomputed from the nonce on verify — never stored, cannot be overstated |
+
+Verify with `whoiam_ante::verify_slot(&pk, bytes)` (or `ante_core`'s
+`AnteProof::verify` plus the two checks above). `whoiam-client` does this
+for you and exposes `Identity::ante_bits`; a slot that fails is
+`FetchError::Malformed`, like any other hostile well-known slot.
+
+Policy is yours: accept a write when `ante_bits >= min_bits`, with
+`min_bits` set so one persona's grind outweighs what one write is worth.
+Rough guide: 16 bits is a speed bump, 20 a real moment, 24 tens of
+seconds in a browser. Each +1 bit doubles the cost.
+
+**Scope.** A level shows a key *cost something*. It does **not** show the
+persona is unique, human-held, or not one of many an attacker ground —
+each costs the same. Treat personas independently; reputation and ghost
+keys sit above this. The proof has no freshness (`ts` is not trusted).
+
+The identity contract does not inspect this slot (any correctly signed
+slot is valid there), so adding it changed no contract bytes and no
+address.
+
 ## Lifecycle
 
 - **Tombstoned slot** (empty content, newer timestamp): the resource was

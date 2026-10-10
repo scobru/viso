@@ -8,8 +8,12 @@ everywhere.
   (back up the seed once, every identity — even future ones — is
   recoverable). Identities are unlinkable in public.
 - Each identity has a **public contract** (address derived from its
-  pubkey) holding signed resource slots: `avatar`, `profile`, more later.
+  pubkey) holding signed resource slots: `avatar`, `profile`, `ante`, more later.
   See [docs/resources.md](docs/resources.md) for the consumer contract.
+- An optional **persona level** (`ante` slot): a proof of commitment
+  ground in the UI and signed by the persona's own key, so apps can tell a
+  persona from a zero-cost throwaway. Built on
+  [ante](https://github.com/soudasuwa/ante)'s `AnteProof`; consumer-side only.
 - The **delegate** is a dumb origin-isolated secret store on your node
   holding the seed; all key derivation and signing happen in the UI.
 - **Destroying** an identity publishes a signed permanent marker first,
@@ -20,6 +24,7 @@ everywhere.
 | dir | what |
 |---|---|
 | `common/` | `whoiam-core`: types, signing, LWW merge, derivation — pure, tested |
+| `common-ante/` | `whoiam-ante`: the `ante` slot (verify / grind / sign) — never linked by the contract |
 | `contracts/identity-contract/` | the public identity contract (wasm) |
 | `delegates/whoiam-delegate/` | seed store delegate (wasm) |
 | `toolkit/whoiam-client/` | Rust consumer crate + `whoiam-fetch` example |
@@ -34,6 +39,7 @@ let pk = whoiam_client::parse_pubkey("…bs58 or hex…")?;
 let id = whoiam_client::fetch(
     "ws://127.0.0.1:7509/v1/contract/command?encodingProtocol=native", &pk).await?;
 // id.profile: Option<ProfileV1 { name, bio }>, id.avatar: Option<Vec<u8>>
+// id.ante_bits: Option<u32> — verified persona level; apply your own min_bits
 ```
 
 Signatures are verified client-side; the serving node is untrusted.

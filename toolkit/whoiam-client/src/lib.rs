@@ -56,6 +56,9 @@ pub struct Identity {
     pub pubkey: VerifyingKey,
     pub profile: Option<ProfileV1>,
     pub avatar: Option<Vec<u8>>,
+    /// Proof-of-commitment level (leading-zero bits) from the `ante` slot,
+    /// already verified for this key and purpose. Apply your own threshold.
+    pub ante_bits: Option<u32>,
     pub raw_slots: BTreeMap<String, Vec<u8>>,
 }
 
@@ -139,10 +142,15 @@ pub(crate) fn identity_from_state(
             Ok(b.clone())
         })
         .transpose()?;
+    let ante_bits = raw_slots
+        .get(whoiam_ante::SLOT_ANTE)
+        .map(|b| whoiam_ante::verify_slot(pk, b).map_err(FetchError::Malformed))
+        .transpose()?;
     Ok(Identity {
         pubkey: *pk,
         profile,
         avatar,
+        ante_bits,
         raw_slots,
     })
 }
@@ -285,6 +293,30 @@ mod tests {
         state
             .slots
             .insert("avatar".into(), sign_slot(&sk, "avatar", 100, b"GIF89a not a png".to_vec()));
+        assert!(matches!(
+            identity_from_state(&pk, &state),
+            Err(FetchError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn ante_slot_verified_and_hostile_one_rejected() {
+        let sk = key();
+        let pk = sk.verifying_key();
+        let nonce = whoiam_ante::grind_step(&pk, 0, u64::MAX, 8).unwrap();
+
+        let mut state = IdentityStateV1::default();
+        let slot = whoiam_ante::make_slot(&sk, nonce, 1);
+        state.slots.insert("ante".into(), sign_slot(&sk, "ante", 100, slot));
+        assert!(identity_from_state(&pk, &state).unwrap().ante_bits.unwrap() >= 8);
+
+        // Self-signed slot carrying SOMEONE ELSE's proof: authorship is
+        // genuine, the claim is not.
+        let other = key();
+        let n2 = whoiam_ante::grind_step(&other.verifying_key(), 0, u64::MAX, 8).unwrap();
+        let stolen = whoiam_ante::make_slot(&other, n2, 1);
+        let mut state = IdentityStateV1::default();
+        state.slots.insert("ante".into(), sign_slot(&sk, "ante", 100, stolen));
         assert!(matches!(
             identity_from_state(&pk, &state),
             Err(FetchError::Malformed(_))

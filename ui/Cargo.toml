@@ -8,6 +8,7 @@ description = "whoiam web UI (Dioxus)"
 
 [dependencies]
 whoiam-core.workspace = true
+whoiam-ante.workspace = true
 freenet-stdlib = { workspace = true, features = ["net"] }
 ciborium.workspace = true
 serde.workspace = true

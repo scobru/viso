@@ -21,6 +21,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ante-core"
+version = "0.1.0"
+source = "git+https://github.com/soudasuwa/ante?rev=3dd20945c9cf85cc84b4d4daa639b845761ccc0c#3dd20945c9cf85cc84b4d4daa639b845761ccc0c"
+dependencies = [
+ "blake3",
+ "bs58",
+ "ciborium",
+ "ed25519-dalek",
+ "serde",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3133,6 +3145,9 @@ name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
+dependencies = [
+ "rand_core 0.6.4",
+]
 
 [[package]]
 name = "slab"
@@ -3902,6 +3917,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "whoiam-ante"
+version = "0.1.0"
+dependencies = [
+ "ante-core",
+ "ed25519-dalek",
+]
+
+[[package]]
 name = "whoiam-client"
 version = "0.1.0"
 dependencies = [
@@ -3914,6 +3937,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite",
+ "whoiam-ante",
  "whoiam-core",
 ]
 
@@ -3962,6 +3986,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "whoiam-ante",
  "whoiam-core",
 ]
 
@@ -3986,6 +4011,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "whoiam-ante",
  "whoiam-core",
 ]
 

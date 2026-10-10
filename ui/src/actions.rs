@@ -295,6 +295,52 @@ pub async fn remove_avatar(index: u32) -> Result<(), String> {
     publish_slot(index, SLOT_AVATAR, vec![]).await
 }
 
+/// Verified proof-of-commitment bits of this persona's published `ante`
+/// slot, if any.
+pub fn persona_level(index: u32) -> Option<u32> {
+    let pk = identity_pubkey(index)?;
+    let states = IDENTITY_STATES.read();
+    let slot = states.get(&pk.to_bytes())?.as_ref()?.slots.get(whoiam_ante::SLOT_ANTE)?;
+    whoiam_ante::verify_slot(&pk, &slot.bytes).ok()
+}
+
+/// Hashes per chunk before yielding to the browser event loop.
+const GRIND_CHUNK: u64 = 20_000;
+
+/// Grind a nonce reaching `target_bits` for this persona, in chunks that
+/// yield so the UI stays live, then publish it as the `ante` slot.
+/// `progress` gets hashes tried so far; `cancelled` is polled per chunk.
+/// Refuses to publish a level not above the current one (LWW would
+/// otherwise let a cheaper proof replace a dearer one).
+pub async fn raise_level(
+    index: u32,
+    target_bits: u32,
+    mut progress: impl FnMut(u64),
+    cancelled: impl Fn() -> bool,
+) -> Result<u32, String> {
+    let current = persona_level(index).unwrap_or(0);
+    if target_bits <= current {
+        return Err(format!("already at {current} bits"));
+    }
+    let sk = signing_key(index)?;
+    let pk = sk.verifying_key();
+    let mut start = 0u64;
+    let nonce = loop {
+        if cancelled() {
+            return Err("cancelled".into());
+        }
+        if let Some(n) = whoiam_ante::grind_step(&pk, start, GRIND_CHUNK, target_bits) {
+            break n;
+        }
+        start += GRIND_CHUNK;
+        progress(start);
+        crate::sleep_ms(0).await;
+    };
+    let bits = whoiam_ante::bits(&pk, nonce);
+    publish_slot(index, whoiam_ante::SLOT_ANTE, whoiam_ante::make_slot(&sk, nonce, keys::now_ms())).await?;
+    Ok(bits)
+}
+
 /// Destroy the PUBLIC identity first (signed permanent marker), wait until
 /// the node confirms the marker landed, and only then forget it locally —
 /// deleting local metadata on an unconfirmed push would leave the public

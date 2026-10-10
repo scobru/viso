@@ -1,0 +1,18 @@
+[package]
+name = "whoiam-ante"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The `ante` slot: a per-persona proof of commitment (ante v0.2.0 AnteProof)"
+
+# NOT a dependency of the identity contract or the delegate, and must never
+# become one: their wasm bytes derive every published address. This crate
+# only serves consumers (whoiam-client, ui, demo).
+
+[dependencies]
+ante-core.workspace = true
+ed25519-dalek.workspace = true
+
+[dev-dependencies]
+ante-core = { workspace = true, features = ["testvec"] }

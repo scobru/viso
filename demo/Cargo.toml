@@ -8,6 +8,7 @@ description = "Demo Freenet app: verify a whoiam connect proof and show the pers
 
 [dependencies]
 whoiam-core.workspace = true
+whoiam-ante.workspace = true
 freenet-stdlib = { workspace = true, features = ["net"] }
 bs58.workspace = true
 base64 = "0.22"

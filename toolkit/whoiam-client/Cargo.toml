@@ -8,6 +8,7 @@ description = "Fetch whoiam identities (avatar, profile) from Freenet, verified 
 
 [dependencies]
 whoiam-core.workspace = true
+whoiam-ante.workspace = true
 freenet-stdlib = { workspace = true, features = ["net"] }
 ciborium.workspace = true
 ed25519-dalek.workspace = true

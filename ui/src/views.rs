@@ -951,6 +951,8 @@ fn Detail(index: u32) -> Element {
                 if !save_err.read().is_empty() { p { class: "error", "{save_err}" } }
             }
 
+            PersonaLevel { index }
+
             div { class: "card",
                 h3 { "Share with apps" }
                 p { class: "muted", "Apps fetch this persona with your public key (they derive the contract from it):" }
@@ -993,6 +995,84 @@ fn Detail(index: u32) -> Element {
                 }
                 if !destroy_err.read().is_empty() { p { class: "error", "{destroy_err}" } }
             }
+        }
+    }
+}
+
+/// Proof-of-commitment level (ante): grind CPU for this persona so apps
+/// can tell it apart from a zero-cost throwaway. Not proof of uniqueness.
+#[component]
+fn PersonaLevel(index: u32) -> Element {
+    let mut target = use_signal(|| 20u32);
+    let mut busy = use_signal(|| false);
+    let mut tried = use_signal(|| 0u64);
+    let mut cancel = use_signal(|| false);
+    let mut msg = use_signal(String::new);
+    let mut err = use_signal(String::new);
+
+    let level = actions::persona_level(index);
+    let t = *target.read();
+    let expected = 1u64 << t;
+    let pct = (*tried.read() as f64 / expected as f64 * 100.0).min(99.0) as u32;
+
+    rsx! {
+        div { class: "card",
+            h3 { "Persona level" }
+            p { class: "muted",
+                "Spend a moment of CPU on this persona so apps can tell it from a free throwaway. It shows the persona cost something — not that it is unique or human."
+            }
+            label { "Current" }
+            p {
+                match level {
+                    Some(b) => rsx! { strong { "{b} bits" } },
+                    None => rsx! { span { class: "muted", "none yet" } },
+                }
+            }
+            label { "Target" }
+            div { class: "row",
+                for b in [16u32, 20, 24] {
+                    button {
+                        class: if t == b { "primary" } else { "ghost" },
+                        disabled: *busy.read() || level.is_some_and(|l| l >= b),
+                        onclick: move |_| target.set(b),
+                        "{b} bits"
+                    }
+                }
+            }
+            p { class: "muted small", "≈ {expected} hashes on average; each +1 bit doubles the cost." }
+            div { class: "row",
+                if *busy.read() {
+                    span { "grinding… {pct}%" }
+                    button { class: "ghost", onclick: move |_| cancel.set(true), "cancel" }
+                } else {
+                    button { class: "primary",
+                        disabled: level.is_some_and(|l| l >= t),
+                        onclick: move |_| {
+                            busy.set(true);
+                            cancel.set(false);
+                            tried.set(0);
+                            err.set(String::new());
+                            msg.set(String::new());
+                            spawn(async move {
+                                let r = actions::raise_level(
+                                    index,
+                                    t,
+                                    move |n| tried.set(n),
+                                    move || *cancel.peek(),
+                                ).await;
+                                match r {
+                                    Ok(b) => msg.set(format!("published {b} bits ✓")),
+                                    Err(e) => err.set(e),
+                                }
+                                busy.set(false);
+                            });
+                        },
+                        "Raise level"
+                    }
+                    if !msg.read().is_empty() { span { class: "ok", "{msg}" } }
+                }
+            }
+            if !err.read().is_empty() { p { class: "error", "{err}" } }
         }
     }
 }

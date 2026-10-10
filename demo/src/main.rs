@@ -527,6 +527,13 @@ fn VerifiedView(pk: [u8; 32]) -> Element {
         Some(slot.bytes.clone())
     });
     let destroyed = state.as_ref().is_some_and(|s| s.destroyed.is_some());
+    // Proof-of-commitment level: verified for THIS key and purpose; a real
+    // app compares it to its own min_bits policy before accepting writes.
+    let ante_bits: Option<u32> = state.as_ref().and_then(|s| {
+        let slot = s.slots.get(whoiam_ante::SLOT_ANTE)?;
+        let vk = VerifyingKey::from_bytes(&pk).ok()?;
+        whoiam_ante::verify_slot(&vk, &slot.bytes).ok()
+    });
     let name = profile.as_ref().map(|p| p.name.clone()).unwrap_or_default();
     let bio = profile.as_ref().map(|p| p.bio.clone()).unwrap_or_default();
     let display = if name.is_empty() { short_key(&pk) } else { name.clone() };
@@ -556,6 +563,10 @@ fn VerifiedView(pk: [u8; 32]) -> Element {
                 }
                 if !bio.is_empty() { p { class: "bio", "{bio}" } }
                 if profile.is_none() { p { class: "muted", "No profile published yet — just a proven key." } }
+                match ante_bits {
+                    Some(b) => rsx! { p { class: "muted", "Persona level: ", strong { "{b} bits" }, " of proof of commitment." } },
+                    None => rsx! { p { class: "muted", "Persona level: none — a zero-cost key as far as this app can tell." } },
+                }
             }
         } else if let Some(e) = fetch_error {
             div { class: "card", p { class: "error", "{e}" } }
