@@ -1,10 +1,9 @@
 //! UI components. One file — the phase-1 surface is small.
 
 use dioxus::prelude::*;
-use whoiam_core::resources::{ProfileV1, MAX_AVATAR_BYTES, MAX_BIO_CHARS, MAX_NAME_CHARS, SLOT_AVATAR, SLOT_PROFILE};
+use viso_core::resources::{ProfileV1, MAX_BIO_CHARS, MAX_NAME_CHARS, SLOT_AVATAR, SLOT_PROFILE};
 
 use crate::actions;
-use crate::api;
 use crate::state::*;
 
 const KEY_STORE_TIMEOUT_MS: u32 = 12_000;
@@ -33,7 +32,7 @@ fn sniff_mime(bytes: &[u8]) -> &'static str {
 }
 
 /// This identity's published state, if it has arrived.
-fn published(index: u32) -> Option<whoiam_core::state::IdentityStateV1> {
+fn published(index: u32) -> Option<viso_core::state::IdentityStateV1> {
     let pk = actions::identity_pubkey(index)?;
     IDENTITY_STATES.read().get(&pk.to_bytes())?.clone()
 }
@@ -44,7 +43,7 @@ fn published_profile(index: u32) -> Option<ProfileV1> {
     if slot.bytes.is_empty() {
         return None;
     }
-    whoiam_core::from_cbor(&slot.bytes).ok()
+    viso_core::from_cbor(&slot.bytes).ok()
 }
 
 fn published_avatar(index: u32) -> Option<Vec<u8>> {
@@ -54,7 +53,7 @@ fn published_avatar(index: u32) -> Option<Vec<u8>> {
         return None;
     }
     // Signed ≠ well-formed: schema-check before the bytes reach an <img>.
-    whoiam_core::resources::check_avatar_bytes(&slot.bytes).ok()?;
+    viso_core::resources::check_avatar_bytes(&slot.bytes).ok()?;
     Some(slot.bytes.clone())
 }
 
@@ -261,7 +260,7 @@ async fn shrink_to_avatar(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     let side = w.min(h);
     // Descend from the schema's max dimension until the PNG fits the byte
     // cap (photos at 512² routinely exceed it); never below the schema min.
-    use whoiam_core::resources::{MAX_AVATAR_DIM, MIN_AVATAR_DIM};
+    use viso_core::resources::{MAX_AVATAR_DIM, MIN_AVATAR_DIM};
     for out in [MAX_AVATAR_DIM, 384, 256, 192, 128, 96, MIN_AVATAR_DIM] {
         let out = out.min(side.max(MIN_AVATAR_DIM));
         let canvas: web_sys::HtmlCanvasElement = document
@@ -329,7 +328,7 @@ pub fn App() -> Element {
                         Err(e) => api::log(&format!("delegate registration failed: {e}")),
                     },
                 }
-                use whoiam_core::delegate_api::{WhoiamDelegateRequest, KEY_META, KEY_SEED};
+                use viso_core::delegate_api::{WhoiamDelegateRequest, KEY_META, KEY_SEED};
                 for key in [KEY_SEED, KEY_META] {
                     if let Err(e) = api::kv_request(WhoiamDelegateRequest::Get { key: key.into() }).await {
                         api::log(&format!("{key} get failed: {e}"));
@@ -397,7 +396,7 @@ pub fn App() -> Element {
             "your persona, everywhere · "
             button { onclick: move |_| *VIEW.write() = View::Backup, "backup" }
             " · "
-            a { href: "https://github.com/skandragon/freenet-whoiam", target: "_blank", "source" }
+            a { href: "https://github.com/scobru/viso", target: "_blank", "source" }
         }
     }
 }
@@ -456,7 +455,7 @@ fn Onboarding() -> Element {
                 span { class: "grad", "Every app." }
             }
             p { class: "sub",
-                "whoiam keeps your avatar, name, and bio in one place on Freenet. Apps that know you pull them from here — update once, it updates everywhere. No account, no server, no tracking. Just a key that's yours."
+                "Viso keeps your avatar, name, and bio in one place on Freenet. Apps that know you pull them from here — update once, it updates everywhere. No account, no server, no tracking. Just a key that's yours."
             }
             if !*restoring.read() {
                 div { class: "hero-actions",
@@ -584,7 +583,7 @@ fn ConnectView() -> Element {
                 div { class: "card center-text",
                     h2 { "{msg}" }
                     p { class: "muted", "{hint}" }
-                    button { class: "ghost", onclick: move |_| *CONNECT.write() = None, "back to whoiam" }
+                    button { class: "ghost", onclick: move |_| *CONNECT.write() = None, "back to Viso" }
                 }
             }
         };
@@ -605,7 +604,7 @@ fn ConnectView() -> Element {
             if entries.is_empty() {
                 div { class: "card center-text",
                     p { class: "muted", "You don't have any personas yet. Set one up first, then start over from the site." }
-                    button { class: "ghost", onclick: move |_| *CONNECT.write() = None, "open whoiam" }
+                    button { class: "ghost", onclick: move |_| *CONNECT.write() = None, "open Viso" }
                 }
             }
             div { class: "grid",

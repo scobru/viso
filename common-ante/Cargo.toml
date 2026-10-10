@@ -1,10 +1,10 @@
 [package]
-name = "whoiam-ante"
+name = "viso-ante"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The `ante` slot: a per-persona proof of commitment (ante v0.2.0 AnteProof)"
+description = "The `ante` slot: a per-persona proof of commitment for Viso (ante v0.2.0 AnteProof)"
 
 # NOT a dependency of the identity contract or the delegate, and must never
 # become one: their wasm bytes derive every published address. This crate

@@ -2,7 +2,7 @@
 
 use ed25519_dalek::VerifyingKey;
 use freenet_stdlib::prelude::{ContractCode, ContractInstanceId, ContractKey, Parameters};
-use whoiam_core::state::IdentityParamsV1;
+use viso_core::state::IdentityParamsV1;
 
 pub const IDENTITY_CONTRACT_WASM: &[u8] = include_bytes!("../contracts/identity_contract.wasm");
 pub const WHOIAM_DELEGATE_WASM: &[u8] = include_bytes!("../contracts/whoiam_delegate.wasm");
@@ -15,7 +15,7 @@ pub fn identity_params(pk: &VerifyingKey) -> IdentityParamsV1 {
 }
 
 pub fn identity_key(pk: &VerifyingKey) -> ContractKey {
-    let params = whoiam_core::to_cbor(&identity_params(pk)).expect("params serialize");
+    let params = viso_core::to_cbor(&identity_params(pk)).expect("params serialize");
     ContractKey::from_params_and_code(
         Parameters::from(params),
         &ContractCode::from(IDENTITY_CONTRACT_WASM.to_vec()),

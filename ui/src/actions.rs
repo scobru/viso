@@ -4,13 +4,13 @@
 use dioxus::prelude::*;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde_bytes::ByteBuf;
-use whoiam_core::delegate_api::{
+use viso_core::delegate_api::{
     IdentityEntry, IdentityMeta, WhoiamDelegateRequest, KEY_META, KEY_SEED,
 };
-use whoiam_core::derive::identity_signing_key;
-use whoiam_core::merge::merge_state;
-use whoiam_core::resources::{check_avatar_bytes, check_profile, ProfileV1, SLOT_AVATAR, SLOT_PROFILE};
-use whoiam_core::state::{sign_destroy, sign_slot, IdentityStateV1};
+use viso_core::derive::identity_signing_key;
+use viso_core::merge::merge_state;
+use viso_core::resources::{check_avatar_bytes, check_profile, ProfileV1, SLOT_AVATAR, SLOT_PROFILE};
+use viso_core::state::{sign_destroy, sign_slot, IdentityStateV1};
 
 use crate::api;
 use crate::keys;
@@ -81,7 +81,7 @@ async fn put_identity_confirmed(pk: &VerifyingKey, what: &str) -> Result<(), Str
 /// Persist meta, then mirror it locally — only after the delegate confirms,
 /// so the UI never shows identities the store doesn't hold.
 async fn store_meta(meta: &IdentityMeta) -> Result<(), String> {
-    kv_store_confirmed(KEY_META, whoiam_core::to_cbor(meta)?).await?;
+    kv_store_confirmed(KEY_META, viso_core::to_cbor(meta)?).await?;
     *META.write() = meta.clone();
     Ok(())
 }
@@ -122,7 +122,7 @@ pub fn backup_text_for(s: &[u8; 32]) -> Result<String, String> {
     let hex = data_encoding::HEXLOWER.encode(s);
     let words = bip39::Mnemonic::from_entropy(s).map_err(|e| e.to_string())?;
     Ok(format!(
-        "whoiam master seed — KEEP THIS SECRET, KEEP THIS SAFE\n\
+        "viso master seed — KEEP THIS SECRET, KEEP THIS SAFE\n\
          Anyone with this seed controls every persona derived from it,\n\
          including ones you create in the future.\n\n\
          hex:\n{hex}\n\nrecovery phrase (24 words):\n{words}\n"
@@ -283,7 +283,7 @@ pub async fn save_profile(index: u32, name: String, bio: String) -> Result<(), S
         bio: bio.trim().to_string(),
     };
     check_profile(&profile)?;
-    publish_slot(index, SLOT_PROFILE, whoiam_core::to_cbor(&profile)?).await
+    publish_slot(index, SLOT_PROFILE, viso_core::to_cbor(&profile)?).await
 }
 
 pub async fn publish_avatar(index: u32, png: Vec<u8>) -> Result<(), String> {
@@ -300,8 +300,8 @@ pub async fn remove_avatar(index: u32) -> Result<(), String> {
 pub fn persona_level(index: u32) -> Option<u32> {
     let pk = identity_pubkey(index)?;
     let states = IDENTITY_STATES.read();
-    let slot = states.get(&pk.to_bytes())?.as_ref()?.slots.get(whoiam_ante::SLOT_ANTE)?;
-    whoiam_ante::verify_slot(&pk, &slot.bytes).ok()
+    let slot = states.get(&pk.to_bytes())?.as_ref()?.slots.get(viso_ante::SLOT_ANTE)?;
+    viso_ante::verify_slot(&pk, &slot.bytes).ok()
 }
 
 /// Hashes per chunk before yielding to the browser event loop.
@@ -329,15 +329,15 @@ pub async fn raise_level(
         if cancelled() {
             return Err("cancelled".into());
         }
-        if let Some(n) = whoiam_ante::grind_step(&pk, start, GRIND_CHUNK, target_bits) {
+        if let Some(n) = viso_ante::grind_step(&pk, start, GRIND_CHUNK, target_bits) {
             break n;
         }
         start += GRIND_CHUNK;
         progress(start);
         crate::sleep_ms(0).await;
     };
-    let bits = whoiam_ante::bits(&pk, nonce);
-    publish_slot(index, whoiam_ante::SLOT_ANTE, whoiam_ante::make_slot(&sk, nonce, keys::now_ms())).await?;
+    let bits = viso_ante::bits(&pk, nonce);
+    publish_slot(index, viso_ante::SLOT_ANTE, viso_ante::make_slot(&sk, nonce, keys::now_ms())).await?;
     Ok(bits)
 }
 
@@ -398,12 +398,12 @@ fn callback_url(return_url: &str, params: &str) -> String {
 pub fn connect_ok_url(index: u32, req: &ConnectRequest, time_ms: u64) -> Result<String, String> {
     let sk = signing_key(index)?;
     let pk = sk.verifying_key();
-    let sig = whoiam_core::connect::sign_connect(&sk, &req.return_base, &req.challenge, time_ms);
+    let sig = viso_core::connect::sign_connect(&sk, &req.return_base, &req.challenge, time_ms);
     let hex = |b: &[u8]| data_encoding::HEXLOWER.encode(b);
     Ok(callback_url(
         &req.return_url,
         &format!(
-            "whoiam=ok&pk={}&sig={}&challenge={}&ts={time_ms}",
+            "viso=ok&pk={}&sig={}&challenge={}&ts={time_ms}",
             hex(pk.as_bytes()),
             hex(&sig.to_bytes()),
             req.challenge
@@ -412,7 +412,7 @@ pub fn connect_ok_url(index: u32, req: &ConnectRequest, time_ms: u64) -> Result<
 }
 
 pub fn connect_denied_url(req: &ConnectRequest) -> String {
-    callback_url(&req.return_url, "whoiam=denied")
+    callback_url(&req.return_url, "viso=denied")
 }
 
 /// Fetch (and subscribe to) every identity in meta — boot and post-restore.
@@ -453,8 +453,8 @@ mod tests {
 
     #[test]
     fn callback_url_separator() {
-        assert_eq!(callback_url("https://x.com/cb", "whoiam=denied"), "https://x.com/cb?whoiam=denied");
-        assert_eq!(callback_url("https://x.com/cb?a=1", "whoiam=denied"), "https://x.com/cb?a=1&whoiam=denied");
+        assert_eq!(callback_url("https://x.com/cb", "viso=denied"), "https://x.com/cb?viso=denied");
+        assert_eq!(callback_url("https://x.com/cb?a=1", "viso=denied"), "https://x.com/cb?a=1&viso=denied");
     }
 
     /// The whole point of a backup: both encodings in the file must parse

@@ -1,10 +1,10 @@
 [package]
-name = "whoiam-delegate"
+name = "viso-delegate"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "whoiam key-store delegate: origin-isolated encrypted KV"
+description = "Viso key-store delegate: origin-isolated encrypted KV"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -19,7 +19,7 @@ serde.workspace = true
 serde_bytes.workspace = true
 bs58.workspace = true
 freenet-stdlib.workspace = true
-whoiam-core.workspace = true
+viso-core.workspace = true
 # Stub getrandom backend (freenet/river#241). No RNG is ever called — key
 # GENERATION happens in the browser UI; this delegate only stores.
 getrandom = { workspace = true, features = ["custom"] }

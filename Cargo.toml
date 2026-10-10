@@ -3,8 +3,8 @@ members = [
     "common",
     "common-ante",
     "contracts/identity-contract",
-    "delegates/whoiam-delegate",
-    "toolkit/whoiam-client",
+    "delegates/viso-delegate",
+    "toolkit/viso-client",
     "ui",
     "demo",
 ]
@@ -14,7 +14,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/skandragon/freenet-whoiam"
+repository = "https://github.com/scobru/viso"
 
 [workspace.dependencies]
 ciborium = "0.2.2"
@@ -37,8 +37,8 @@ data-encoding = "2"
 
 freenet-stdlib = { version = "0.8.5", features = ["contract"] }
 
-whoiam-core = { path = "common" }
-whoiam-ante = { path = "common-ante" }
+viso-core = { path = "common" }
+viso-ante = { path = "common-ante" }
 
 # ante (archived upstream, MIT/Apache) pinned to its v0.2.0 commit: the
 # AnteProof wire format is frozen there. Consumer crates only — never the

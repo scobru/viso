@@ -1898,7 +1898,7 @@ dependencies = [
  "getrandom 0.2.17",
  "rand 0.8.7",
  "serde",
- "whoiam-core",
+ "viso-core",
 ]
 
 [[package]]
@@ -3762,6 +3762,105 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "viso-ante"
+version = "0.1.0"
+dependencies = [
+ "ante-core",
+ "ed25519-dalek",
+]
+
+[[package]]
+name = "viso-client"
+version = "0.1.0"
+dependencies = [
+ "bs58",
+ "ciborium",
+ "data-encoding",
+ "ed25519-dalek",
+ "freenet-stdlib",
+ "rand 0.8.7",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-tungstenite",
+ "viso-ante",
+ "viso-core",
+]
+
+[[package]]
+name = "viso-core"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "bs58",
+ "ciborium",
+ "data-encoding",
+ "ed25519-dalek",
+ "freenet-stdlib",
+ "rand 0.8.7",
+ "serde",
+ "serde_bytes",
+]
+
+[[package]]
+name = "viso-delegate"
+version = "0.1.0"
+dependencies = [
+ "bs58",
+ "ciborium",
+ "freenet-stdlib",
+ "getrandom 0.2.17",
+ "serde",
+ "serde_bytes",
+ "viso-core",
+]
+
+[[package]]
+name = "viso-demo"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "bs58",
+ "data-encoding",
+ "dioxus",
+ "ed25519-dalek",
+ "freenet-stdlib",
+ "futures",
+ "getrandom 0.2.17",
+ "js-sys",
+ "rand 0.8.7",
+ "viso-ante",
+ "viso-core",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "viso-ui"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "bip39",
+ "bs58",
+ "ciborium",
+ "data-encoding",
+ "dioxus",
+ "ed25519-dalek",
+ "freenet-stdlib",
+ "futures",
+ "getrandom 0.2.17",
+ "js-sys",
+ "rand 0.8.7",
+ "serde",
+ "serde_bytes",
+ "viso-ante",
+ "viso-core",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "walkdir"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3914,105 +4013,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
-]
-
-[[package]]
-name = "whoiam-ante"
-version = "0.1.0"
-dependencies = [
- "ante-core",
- "ed25519-dalek",
-]
-
-[[package]]
-name = "whoiam-client"
-version = "0.1.0"
-dependencies = [
- "bs58",
- "ciborium",
- "data-encoding",
- "ed25519-dalek",
- "freenet-stdlib",
- "rand 0.8.7",
- "thiserror 2.0.20",
- "tokio",
- "tokio-tungstenite",
- "whoiam-ante",
- "whoiam-core",
-]
-
-[[package]]
-name = "whoiam-core"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "bs58",
- "ciborium",
- "data-encoding",
- "ed25519-dalek",
- "freenet-stdlib",
- "rand 0.8.7",
- "serde",
- "serde_bytes",
-]
-
-[[package]]
-name = "whoiam-delegate"
-version = "0.1.0"
-dependencies = [
- "bs58",
- "ciborium",
- "freenet-stdlib",
- "getrandom 0.2.17",
- "serde",
- "serde_bytes",
- "whoiam-core",
-]
-
-[[package]]
-name = "whoiam-demo"
-version = "0.1.0"
-dependencies = [
- "base64",
- "bs58",
- "data-encoding",
- "dioxus",
- "ed25519-dalek",
- "freenet-stdlib",
- "futures",
- "getrandom 0.2.17",
- "js-sys",
- "rand 0.8.7",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "whoiam-ante",
- "whoiam-core",
-]
-
-[[package]]
-name = "whoiam-ui"
-version = "0.1.0"
-dependencies = [
- "base64",
- "bip39",
- "bs58",
- "ciborium",
- "data-encoding",
- "dioxus",
- "ed25519-dalek",
- "freenet-stdlib",
- "futures",
- "getrandom 0.2.17",
- "js-sys",
- "rand 0.8.7",
- "serde",
- "serde_bytes",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "whoiam-ante",
- "whoiam-core",
 ]
 
 [[package]]

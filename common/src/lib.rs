@@ -1,4 +1,4 @@
-//! whoiam core: identity state, per-slot LWW merge, key derivation,
+//! Viso core: identity state, per-slot LWW merge, key derivation,
 //! resource schemas, delegate API. Pure logic — no wasm entry points, no
 //! I/O — shared by the contract, the delegate, the toolkit, and the UI.
 

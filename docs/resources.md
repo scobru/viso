@@ -1,12 +1,12 @@
-# whoiam public resources
+# Viso public resources
 
-The contract every consumer reads. An identity is an ed25519 public key;
+The contract every consumer reads. A persona is an ed25519 public key;
 its contract address derives offline from that key (see "Addressing"). The
 state is a map of named **slots**, each independently signed by the
 identity key. Slots this document doesn't list are valid if correctly
 signed — ignore ones you don't understand.
 
-Verify before trusting: the serving node is untrusted. `whoiam-client`
+Verify before trusting: the serving node is untrusted. `viso-client`
 (Rust) does full signature verification on fetch; if you decode state by
 hand you must verify each slot's signature yourself (domain-separated
 ed25519, see `common/src/state.rs`).
@@ -20,7 +20,7 @@ address = ContractKey::from_params_and_code(params, identity_contract.wasm)
 
 The canonical `identity_contract.wasm` bytes are vendored in
 `ui/contracts/` and pinned in `scripts/wasm-hashes.txt`. Consumers should
-use `whoiam_client::contract_key(&pubkey)` and never compile the wasm
+use `viso_client::contract_key(&pubkey)` and never compile the wasm
 themselves — a byte-different wasm derives the wrong address.
 
 ## Slot: `profile`
@@ -47,7 +47,7 @@ Raw image bytes (the slot content IS the file).
 | size | ≤ 128 KiB |
 
 Consumers should assume square rendering (rounding corners is fine) and
-scale down freely. The whoiam UI re-encodes uploads to a square PNG within
+scale down freely. The Viso UI re-encodes uploads to a square PNG within
 these bounds, but treat dimensions as advisory — a hand-rolled publisher
 may lie, so cap what you render.
 
@@ -62,11 +62,11 @@ signed by the persona's own key.
 | rule | value |
 |---|---|
 | `identity_vk` | **must** equal this persona's pubkey |
-| `purpose` | **must** be `whoiam:persona-level:v1` |
+| `purpose` | **must** be `viso:persona-level:v1` |
 | bits | recomputed from the nonce on verify — never stored, cannot be overstated |
 
-Verify with `whoiam_ante::verify_slot(&pk, bytes)` (or `ante_core`'s
-`AnteProof::verify` plus the two checks above). `whoiam-client` does this
+Verify with `viso_ante::verify_slot(&pk, bytes)` (or `ante_core`'s
+`AnteProof::verify` plus the two checks above). `viso-client` does this
 for you and exposes `Identity::ante_bits`; a slot that fails is
 `FetchError::Malformed`, like any other hostile well-known slot.
 
@@ -87,14 +87,14 @@ address.
 ## Lifecycle
 
 - **Tombstoned slot** (empty content, newer timestamp): the resource was
-  deleted. `whoiam-client` hides these; treat as absent.
+  deleted. `viso-client` hides these; treat as absent.
 - **Destroyed identity**: the state carries only a signed destruction
   marker. This is permanent. Drop cached resources and stop rendering the
-  identity (`whoiam-client` returns `FetchError::Destroyed`).
+  identity (`viso-client` returns `FetchError::Destroyed`).
 
-## Connect flow ("sign in with whoiam")
+## Connect flow ("sign in with Viso")
 
-An app can ask the user to prove they own a persona. Open the whoiam site
+An app can ask the user to prove they own a persona. Open the Viso site
 URL with:
 
 ```
@@ -103,18 +103,18 @@ URL with:
 
 - `challenge`: random, one-time, URL-safe (`[A-Za-z0-9._~-]`, ≤ 256 chars).
   Store it; you must recognize it on the callback.
-- `return`: absolute http(s) URL, no fragment. whoiam shows its origin to
+- `return`: absolute http(s) URL, no fragment. Viso shows its origin to
   the user and binds the proof to its **origin+path** (`return_base`) —
   path included because apps on the same Freenet node share the node's
   HTTP origin.
 
-whoiam returns to the callback — in the same tab when it is a contract app
+Viso returns to the callback — in the same tab when it is a contract app
 on the same node (via the shell's `navigate` postMessage bridge), in a new
 tab otherwise (the sandboxed app cannot top-navigate to a foreign origin) —
-with either `whoiam=denied`, or:
+with either `viso=denied` (or `whoiam=denied` for backwards compat), or:
 
 ```
-whoiam=ok&pk=<hex 32B>&sig=<hex 64B>&challenge=<echo>&ts=<unix ms>
+viso=ok&pk=<hex 32B>&sig=<hex 64B>&challenge=<echo>&ts=<unix ms>
 ```
 
 Verify (reference: `common/src/connect.rs`, exercised by `demo/`):
@@ -123,7 +123,7 @@ Verify (reference: `common/src/connect.rs`, exercised by `demo/`):
    client-side page inside the Freenet sandbox has no storage that
    survives the bounce, so this bookkeeping belongs to your backend or
    your app's delegate.
-2. `ts` is fresh (whoiam signs at click time; ±10 min is reasonable).
+2. `ts` is fresh (Viso signs at click time; ±10 min is reasonable).
 3. ed25519-verify `sig` with `pk` over
    `"whoiam-connect-v1" ‖ pk ‖ u32le len ‖ return_base ‖ u32le len ‖ challenge ‖ u64le ts`
    where `return_base` is your own origin+path.

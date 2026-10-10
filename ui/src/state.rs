@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
 use freenet_stdlib::client_api::WebApi;
-use whoiam_core::delegate_api::IdentityMeta;
-use whoiam_core::state::IdentityStateV1;
+use viso_core::delegate_api::IdentityMeta;
+use viso_core::state::IdentityStateV1;
 
 #[derive(Clone, PartialEq, Debug, Default)]
 pub enum SyncStatus {

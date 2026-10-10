@@ -10,7 +10,7 @@
 //! whoiam's seed (and vice versa).
 
 use serde_bytes::ByteBuf;
-use whoiam_core::delegate_api::{WhoiamDelegateRequest, WhoiamDelegateResponse};
+use viso_core::delegate_api::{WhoiamDelegateRequest, WhoiamDelegateResponse};
 use freenet_stdlib::prelude::{
     delegate, ApplicationMessage, DelegateContext, DelegateCtx, DelegateError, DelegateInterface,
     InboundDelegateMsg, MessageOrigin, OutboundDelegateMsg, Parameters,

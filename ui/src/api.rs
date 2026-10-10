@@ -14,11 +14,11 @@ use freenet_stdlib::client_api::{
 #[cfg(target_arch = "wasm32")]
 use freenet_stdlib::client_api::WebApi;
 use freenet_stdlib::prelude::*;
-use whoiam_core::delegate_api::{
+use viso_core::delegate_api::{
     IdentityMeta, WhoiamDelegateRequest, WhoiamDelegateResponse, KEY_META, KEY_SEED,
 };
-use whoiam_core::merge::merge_state;
-use whoiam_core::state::IdentityStateV1;
+use viso_core::merge::merge_state;
+use viso_core::state::IdentityStateV1;
 
 use crate::keys;
 use crate::state::*;
@@ -125,7 +125,7 @@ pub async fn send(request: ClientRequest<'static>) -> Result<(), String> {
 // ---- contract operations ----
 
 fn identity_container(pk: &VerifyingKey) -> ContractContainer {
-    let params = whoiam_core::to_cbor(&keys::identity_params(pk)).expect("params");
+    let params = viso_core::to_cbor(&keys::identity_params(pk)).expect("params");
     ContractContainer::Wasm(ContractWasmAPIVersion::V1(WrappedContract::new(
         std::sync::Arc::new(ContractCode::from(keys::IDENTITY_CONTRACT_WASM.to_vec())),
         Parameters::from(params),
@@ -135,7 +135,7 @@ fn identity_container(pk: &VerifyingKey) -> ContractContainer {
 /// PUT an identity contract (creates on first use; the contract's merge
 /// makes a re-Put a plain apply). Subscribes so update notifications flow.
 pub async fn put_identity(pk: &VerifyingKey, state: &IdentityStateV1) -> Result<(), String> {
-    let bytes = whoiam_core::to_cbor(state)?;
+    let bytes = viso_core::to_cbor(state)?;
     track(pk);
     send(ClientRequest::ContractOp(ContractRequest::Put {
         contract: identity_container(pk),
@@ -149,7 +149,7 @@ pub async fn put_identity(pk: &VerifyingKey, state: &IdentityStateV1) -> Result<
 
 /// Push a partial state (delta) into our identity contract.
 pub async fn update_identity(pk: &VerifyingKey, delta: &IdentityStateV1) -> Result<(), String> {
-    let bytes = whoiam_core::to_cbor(delta)?;
+    let bytes = viso_core::to_cbor(delta)?;
     track(pk);
     send(ClientRequest::ContractOp(ContractRequest::Update {
         key: keys::identity_key(pk),
@@ -227,7 +227,7 @@ pub async fn register_delegate() -> Result<(), String> {
 }
 
 pub async fn kv_request(request: WhoiamDelegateRequest) -> Result<(), String> {
-    let payload = whoiam_core::to_cbor(&request)?;
+    let payload = viso_core::to_cbor(&request)?;
     send(ClientRequest::DelegateOp(DelegateRequest::ApplicationMessages {
         key: whoiam_delegate_key(),
         params: Parameters::from(Vec::<u8>::new()),
@@ -336,7 +336,7 @@ fn apply_contract_bytes(key: &ContractKey, bytes: &[u8]) {
         return;
     }
     let Ok(vk) = VerifyingKey::from_bytes(&owner) else { return };
-    match whoiam_core::from_cbor::<IdentityStateV1>(bytes) {
+    match viso_core::from_cbor::<IdentityStateV1>(bytes) {
         Ok(incoming) => {
             let mut states = IDENTITY_STATES.write();
             let entry = states.entry(owner).or_insert(None);
@@ -352,7 +352,7 @@ fn apply_contract_bytes(key: &ContractKey, bytes: &[u8]) {
 }
 
 fn dispatch_kv(payload: &[u8]) {
-    match whoiam_core::from_cbor::<WhoiamDelegateResponse>(payload) {
+    match viso_core::from_cbor::<WhoiamDelegateResponse>(payload) {
         Ok(WhoiamDelegateResponse::Value { key, value }) => {
             // Present-but-undecodable is NOT "absent": treating a corrupt
             // seed/meta as a fresh install would route to onboarding, whose
@@ -375,7 +375,7 @@ fn dispatch_kv(payload: &[u8]) {
                         *META.write() = IdentityMeta::default();
                         *META_LOADED.write() = true;
                     }
-                    Some(v) => match whoiam_core::from_cbor::<IdentityMeta>(v) {
+                    Some(v) => match viso_core::from_cbor::<IdentityMeta>(v) {
                         Ok(meta) => {
                             *META.write() = meta;
                             *META_LOADED.write() = true;

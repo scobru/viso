@@ -6,8 +6,8 @@
 use ciborium::{de::from_reader, ser::into_writer};
 use freenet_stdlib::prelude::*;
 
-use whoiam_core::merge::{delta_since, merge_state, summarize, validate_full, SummaryV1};
-use whoiam_core::state::{IdentityParamsV1, IdentityStateV1};
+use viso_core::merge::{delta_since, merge_state, summarize, validate_full, SummaryV1};
+use viso_core::state::{IdentityParamsV1, IdentityStateV1};
 
 fn now_ms() -> u64 {
     freenet_stdlib::time::now().timestamp_millis().max(0) as u64
@@ -118,7 +118,7 @@ mod tests {
     use super::*;
     use ed25519_dalek::SigningKey;
     use rand::rngs::OsRng;
-    use whoiam_core::state::{sign_destroy, sign_slot};
+    use viso_core::state::{sign_destroy, sign_slot};
 
     // The native freenet_stdlib::time stub returns an arbitrary value (it
     // transmutes uninitialized memory — freenet-stdlib 0.8.5 src/time.rs),
@@ -129,7 +129,7 @@ mod tests {
     }
 
     fn params_bytes(sk: &SigningKey) -> Vec<u8> {
-        whoiam_core::to_cbor(&IdentityParamsV1 {
+        viso_core::to_cbor(&IdentityParamsV1 {
             version: 1,
             pubkey: sk.verifying_key(),
         })
@@ -137,7 +137,7 @@ mod tests {
     }
 
     fn state_bytes(state: &IdentityStateV1) -> Vec<u8> {
-        whoiam_core::to_cbor(state).unwrap()
+        viso_core::to_cbor(state).unwrap()
     }
 
     #[test]
@@ -196,7 +196,7 @@ mod tests {
         )
         .unwrap();
         let merged: IdentityStateV1 =
-            whoiam_core::from_cbor(result.new_state.as_ref().unwrap().as_ref()).unwrap();
+            viso_core::from_cbor(result.new_state.as_ref().unwrap().as_ref()).unwrap();
         assert_eq!(merged.slots["profile"].bytes, b"new");
     }
 
@@ -217,7 +217,7 @@ mod tests {
         )
         .unwrap();
         let merged: IdentityStateV1 =
-            whoiam_core::from_cbor(result.new_state.as_ref().unwrap().as_ref()).unwrap();
+            viso_core::from_cbor(result.new_state.as_ref().unwrap().as_ref()).unwrap();
         assert!(merged.slots.is_empty());
         assert!(merged.destroyed.is_some());
     }

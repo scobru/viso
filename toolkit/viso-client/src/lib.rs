@@ -6,9 +6,9 @@
 //! serving node), and returns typed resources.
 //!
 //! ```no_run
-//! # async fn demo() -> Result<(), whoiam_client::FetchError> {
-//! let pk = whoiam_client::parse_pubkey("6Yo3...").unwrap();
-//! let id = whoiam_client::fetch("ws://127.0.0.1:7509/v1/contract/command?encodingProtocol=native", &pk).await?;
+//! # async fn demo() -> Result<(), viso_client::FetchError> {
+//! let pk = viso_client::parse_pubkey("6Yo3...").unwrap();
+//! let id = viso_client::fetch("ws://127.0.0.1:7509/v1/contract/command?encodingProtocol=native", &pk).await?;
 //! println!("{:?} {} bytes of avatar", id.profile, id.avatar.map_or(0, |a| a.len()));
 //! # Ok(()) }
 //! ```
@@ -22,9 +22,9 @@ use freenet_stdlib::client_api::{
 };
 use freenet_stdlib::prelude::*;
 
-use whoiam_core::merge::validate_full;
-use whoiam_core::resources::{ProfileV1, SLOT_AVATAR, SLOT_PROFILE};
-use whoiam_core::state::{IdentityParamsV1, IdentityStateV1};
+use viso_core::merge::validate_full;
+use viso_core::resources::{ProfileV1, SLOT_AVATAR, SLOT_PROFILE};
+use viso_core::state::{IdentityParamsV1, IdentityStateV1};
 
 /// The exact contract bytes every canonical whoiam build publishes with.
 /// Addresses are hash(wasm + params); changing these bytes rotates every
@@ -71,7 +71,7 @@ pub fn identity_params(pk: &VerifyingKey) -> IdentityParamsV1 {
 
 /// The identity's contract key, derived offline.
 pub fn contract_key(pk: &VerifyingKey) -> ContractKey {
-    let params = whoiam_core::to_cbor(&identity_params(pk)).expect("params serialize");
+    let params = viso_core::to_cbor(&identity_params(pk)).expect("params serialize");
     ContractKey::from_params_and_code(
         Parameters::from(params),
         &ContractCode::from(IDENTITY_CONTRACT_WASM.to_vec()),
@@ -130,21 +130,21 @@ pub(crate) fn identity_from_state(
     let profile = raw_slots
         .get(SLOT_PROFILE)
         .map(|b| {
-            let p: ProfileV1 = whoiam_core::from_cbor(b).map_err(FetchError::Malformed)?;
-            whoiam_core::resources::check_profile(&p).map_err(FetchError::Malformed)?;
+            let p: ProfileV1 = viso_core::from_cbor(b).map_err(FetchError::Malformed)?;
+            viso_core::resources::check_profile(&p).map_err(FetchError::Malformed)?;
             Ok(p)
         })
         .transpose()?;
     let avatar = raw_slots
         .get(SLOT_AVATAR)
         .map(|b| {
-            whoiam_core::resources::check_avatar_bytes(b).map_err(FetchError::Malformed)?;
+            viso_core::resources::check_avatar_bytes(b).map_err(FetchError::Malformed)?;
             Ok(b.clone())
         })
         .transpose()?;
     let ante_bits = raw_slots
-        .get(whoiam_ante::SLOT_ANTE)
-        .map(|b| whoiam_ante::verify_slot(pk, b).map_err(FetchError::Malformed))
+        .get(viso_ante::SLOT_ANTE)
+        .map(|b| viso_ante::verify_slot(pk, b).map_err(FetchError::Malformed))
         .transpose()?;
     Ok(Identity {
         pubkey: *pk,
@@ -203,7 +203,7 @@ pub async fn fetch(node_url: &str, pk: &VerifyingKey) -> Result<Identity, FetchE
         return identity_from_state(pk, &IdentityStateV1::default());
     }
     let state: IdentityStateV1 =
-        whoiam_core::from_cbor(state.as_ref()).map_err(FetchError::Malformed)?;
+        viso_core::from_cbor(state.as_ref()).map_err(FetchError::Malformed)?;
     // Full client-side verification — the serving node is untrusted.
     validate_full(&state, pk, wall_now_ms()).map_err(FetchError::BadSignature)?;
     identity_from_state(pk, &state)
@@ -214,7 +214,7 @@ mod tests {
     use super::*;
     use ed25519_dalek::SigningKey;
     use rand::rngs::OsRng;
-    use whoiam_core::state::{sign_destroy, sign_slot};
+    use viso_core::state::{sign_destroy, sign_slot};
 
     fn key() -> SigningKey {
         SigningKey::generate(&mut OsRng)
@@ -243,7 +243,7 @@ mod tests {
         let sk = key();
         let pk = sk.verifying_key();
         let mut state = IdentityStateV1::default();
-        let profile = whoiam_core::to_cbor(&ProfileV1 {
+        let profile = viso_core::to_cbor(&ProfileV1 {
             name: "graff".into(),
             bio: "hi".into(),
         })
@@ -276,7 +276,7 @@ mod tests {
         let pk = sk.verifying_key();
 
         let mut state = IdentityStateV1::default();
-        let big_bio = whoiam_core::to_cbor(&ProfileV1 {
+        let big_bio = viso_core::to_cbor(&ProfileV1 {
             name: "x".into(),
             bio: "b".repeat(100_000),
         })
@@ -303,18 +303,18 @@ mod tests {
     fn ante_slot_verified_and_hostile_one_rejected() {
         let sk = key();
         let pk = sk.verifying_key();
-        let nonce = whoiam_ante::grind_step(&pk, 0, u64::MAX, 8).unwrap();
+        let nonce = viso_ante::grind_step(&pk, 0, u64::MAX, 8).unwrap();
 
         let mut state = IdentityStateV1::default();
-        let slot = whoiam_ante::make_slot(&sk, nonce, 1);
+        let slot = viso_ante::make_slot(&sk, nonce, 1);
         state.slots.insert("ante".into(), sign_slot(&sk, "ante", 100, slot));
         assert!(identity_from_state(&pk, &state).unwrap().ante_bits.unwrap() >= 8);
 
         // Self-signed slot carrying SOMEONE ELSE's proof: authorship is
         // genuine, the claim is not.
         let other = key();
-        let n2 = whoiam_ante::grind_step(&other.verifying_key(), 0, u64::MAX, 8).unwrap();
-        let stolen = whoiam_ante::make_slot(&other, n2, 1);
+        let n2 = viso_ante::grind_step(&other.verifying_key(), 0, u64::MAX, 8).unwrap();
+        let stolen = viso_ante::make_slot(&other, n2, 1);
         let mut state = IdentityStateV1::default();
         state.slots.insert("ante".into(), sign_slot(&sk, "ante", 100, stolen));
         assert!(matches!(

@@ -26,7 +26,7 @@ fn main() {
         eprintln!("usage: whoiam-fetch --key <pubkey> [--node URL] [--avatar-out FILE]");
         std::process::exit(2);
     };
-    let pk = match whoiam_client::parse_pubkey(&keystr) {
+    let pk = match viso_client::parse_pubkey(&keystr) {
         Ok(pk) => pk,
         Err(e) => {
             eprintln!("bad --key: {e}");
@@ -34,14 +34,14 @@ fn main() {
         }
     };
 
-    println!("identity  {}", whoiam_client::format_pubkey(&pk));
-    println!("contract  {}", whoiam_client::contract_key(&pk).id());
+    println!("identity  {}", viso_client::format_pubkey(&pk));
+    println!("contract  {}", viso_client::contract_key(&pk).id());
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("tokio runtime");
-    match rt.block_on(whoiam_client::fetch(&node, &pk)) {
+    match rt.block_on(viso_client::fetch(&node, &pk)) {
         Ok(id) => {
             match &id.profile {
                 Some(p) => println!("name      {}\nbio       {}", p.name, p.bio),

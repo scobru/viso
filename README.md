@@ -1,78 +1,81 @@
-# whoiam
+# Viso
 
-Identity for Freenet apps. One place for your avatar and profile; every
+> **Your decentralized face on Freenet.** Unlinkable personas with cryptographic proof of commitment.
+
+One place for your avatar and profile on [Freenet](https://freenet.org); every
 app that knows your public key can fetch them, and an update here shows up
 everywhere.
 
-- Each **identity** is an ed25519 keypair derived from one master seed
-  (back up the seed once, every identity — even future ones — is
-  recoverable). Identities are unlinkable in public.
-- Each identity has a **public contract** (address derived from its
-  pubkey) holding signed resource slots: `avatar`, `profile`, `ante`, more later.
+- Each **persona (Viso)** is an Ed25519 keypair derived from one master seed
+  (back up the seed once, every persona — even future ones — is
+  recoverable). Personas are unlinkable in public.
+- Each persona has a **public contract** (address derived from its pubkey)
+  holding signed resource slots: `avatar`, `profile`, `ante`, and more in the future.
   See [docs/resources.md](docs/resources.md) for the consumer contract.
-- An optional **persona level** (`ante` slot): a proof of commitment
-  ground in the UI and signed by the persona's own key, so apps can tell a
-  persona from a zero-cost throwaway. Built on
-  [ante](https://github.com/soudasuwa/ante)'s `AnteProof`; consumer-side only.
-- The **delegate** is a dumb origin-isolated secret store on your node
+- Built-in **persona level** (`ante` slot): a proof of commitment (PoW blake3)
+  ground in the UI and signed by the persona's own key, so apps can distinguish
+  legitimate users from zero-cost sybil spam. Built on [ante](https://github.com/soudasuwa/ante).
+- The **delegate** is an origin-isolated secret store on your node
   holding the seed; all key derivation and signing happen in the UI.
-- **Destroying** an identity publishes a signed permanent marker first,
+- **Destroying** a persona publishes a signed permanent marker first,
   then forgets the local keys.
 
 ## Workspace
 
-| dir | what |
+| crate / dir | description |
 |---|---|
-| `common/` | `whoiam-core`: types, signing, LWW merge, derivation — pure, tested |
-| `common-ante/` | `whoiam-ante`: the `ante` slot (verify / grind / sign) — never linked by the contract |
-| `contracts/identity-contract/` | the public identity contract (wasm) |
-| `delegates/whoiam-delegate/` | seed store delegate (wasm) |
-| `toolkit/whoiam-client/` | Rust consumer crate + `whoiam-fetch` example |
-| `ui/` | Dioxus web UI, published to Freenet as a site contract |
-| `demo/` | connect-flow demo app (verify proof, fetch profile), its own site contract |
-| `e2e/` | Playwright suite (run against a throwaway test node) |
+| `common/` (`viso-core`) | Types, signing, LWW merge, derivation — pure Rust, tested |
+| `common-ante/` (`viso-ante`) | The `ante` proof-of-commitment slot (verify / grind / sign) |
+| `contracts/identity-contract/` | The public identity contract (WASM) |
+| `delegates/viso-delegate/` | Seed store delegate (WASM) |
+| `toolkit/viso-client/` | Rust consumer crate + `viso-fetch` CLI example |
+| `ui/` (`viso-ui`) | Dioxus web UI, published to Freenet as a site contract |
+| `demo/` (`viso-demo`) | Connect-flow demo app (verify proof, fetch profile, check level) |
+| `e2e/` | Playwright test suite |
 
-## Consuming an identity (Rust)
+## Consuming a Viso persona (Rust)
 
 ```rust
-let pk = whoiam_client::parse_pubkey("…bs58 or hex…")?;
-let id = whoiam_client::fetch(
+let pk = viso_client::parse_pubkey("…bs58 or hex…")?;
+let id = viso_client::fetch(
     "ws://127.0.0.1:7509/v1/contract/command?encodingProtocol=native", &pk).await?;
-// id.profile: Option<ProfileV1 { name, bio }>, id.avatar: Option<Vec<u8>>
-// id.ante_bits: Option<u32> — verified persona level; apply your own min_bits
+
+// id.profile: Option<ProfileV1 { name, bio }>
+// id.avatar: Option<Vec<u8>>
+// id.ante_bits: Option<u32> — verified persona level; apply your own min_bits policy
 ```
 
-Signatures are verified client-side; the serving node is untrusted.
+Signatures and proof-of-work are verified client-side; the serving node is untrusted.
 
-Apps can also ask the user to prove persona ownership ("sign in with
-whoiam"): open the whoiam site with `?connect=v1&challenge=…&return=…`,
-verify the signed callback, then fetch the proven key's contract — see the
-connect-flow section of [docs/resources.md](docs/resources.md) and the
-demo app in [demo/](demo/) (`make publish-demo`).
+### Connect flow ("Sign in with Viso")
 
-Or from a shell:
+Apps can ask the user to prove persona ownership:
+open the Viso site with `?connect=v1&challenge=…&return=…`,
+verify the signed callback (`viso=ok&pk=…&sig=…`), then fetch the proven key's contract.
+See the connect-flow section of [docs/resources.md](docs/resources.md) and the demo app in [demo/](demo/).
+
+From a shell:
 
 ```sh
-cargo run -p whoiam-client --example whoiam-fetch -- --key <pubkey> --avatar-out avatar.png
+cargo run -p viso-client --example viso-fetch -- --key <pubkey> --avatar-out avatar.png
 ```
 
-## Building
+## Building & Testing
 
 ```sh
-make test           # workspace unit tests
-make contracts      # build + vendor identity_contract.wasm (guarded)
-make delegate       # build + vendor whoiam_delegate.wasm (guarded)
-make ui             # dx build --release
-make publish        # publish the UI site via fdev (needs node tunnel)
+cargo test --workspace
 ```
 
-**Wasm bytes are pinned** (`scripts/wasm-hashes.txt`): contract addresses
-are content-derived, so changed bytes rotate every identity's address.
-`make check-addresses` fails the build if bytes drift; re-pin only as a
-deliberate migration (`make pin-hashes`).
+## Publishing to Freenet
+
+```sh
+cd ui && dx build --release
+fdev website init viso
+fdev website publish --key viso target/dx/viso-ui/release/web/public
+```
 
 ## Roadmap
 
-- Phase 2: app association handshake (#1)
-- Phase 3: OAuth-like cross-app delegation grants (#2)
-- TS toolkit; Ghostkeys interaction is an open question.
+- Phase 2: App association handshake
+- Phase 3: OAuth-like cross-app delegation grants
+- TypeScript client toolkit

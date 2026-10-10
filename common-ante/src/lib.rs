@@ -19,7 +19,7 @@ pub const SLOT_ANTE: &str = "ante";
 
 /// Domain separation: a proof for any other purpose (e.g. ante's own
 /// `ante:identity-level:v1`) is rejected here.
-pub const PURPOSE: &str = "whoiam:persona-level:v1";
+pub const PURPOSE: &str = "viso:persona-level:v1";
 
 /// Decode and verify an `ante` slot for persona `pk`; returns achieved bits.
 /// Rejects proofs for another key or another purpose.

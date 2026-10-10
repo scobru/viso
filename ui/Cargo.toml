@@ -1,14 +1,14 @@
 [package]
-name = "whoiam-ui"
+name = "viso-ui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "whoiam web UI (Dioxus)"
+description = "Viso web UI (Dioxus)"
 
 [dependencies]
-whoiam-core.workspace = true
-whoiam-ante.workspace = true
+viso-core.workspace = true
+viso-ante.workspace = true
 freenet-stdlib = { workspace = true, features = ["net"] }
 ciborium.workspace = true
 serde.workspace = true

@@ -15,9 +15,9 @@ use freenet_stdlib::client_api::ContractResponse;
 #[cfg(target_arch = "wasm32")]
 use freenet_stdlib::client_api::{ClientRequest, ContractRequest, HostResponse, WebApi};
 use freenet_stdlib::prelude::*;
-use whoiam_core::merge::merge_state;
-use whoiam_core::resources::{ProfileV1, SLOT_AVATAR, SLOT_PROFILE};
-use whoiam_core::state::{IdentityParamsV1, IdentityStateV1};
+use viso_core::merge::merge_state;
+use viso_core::resources::{ProfileV1, SLOT_AVATAR, SLOT_PROFILE};
+use viso_core::state::{IdentityParamsV1, IdentityStateV1};
 
 const PROOF_MAX_AGE_MS: u64 = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS: u32 = 30_000;
@@ -27,7 +27,7 @@ const FETCH_TIMEOUT_MS: u32 = 30_000;
 const IDENTITY_CONTRACT_WASM: &[u8] = include_bytes!("../../ui/contracts/identity_contract.wasm");
 
 fn identity_key(pk: &VerifyingKey) -> ContractKey {
-    let params = whoiam_core::to_cbor(&IdentityParamsV1 { version: 1, pubkey: *pk })
+    let params = viso_core::to_cbor(&IdentityParamsV1 { version: 1, pubkey: *pk })
         .expect("params serialize");
     ContractKey::from_params_and_code(
         Parameters::from(params),
@@ -83,7 +83,8 @@ fn decide_mode() -> Mode {
     let Some((base, params)) = own_base_and_params() else {
         return Mode::Landing;
     };
-    match params.get("whoiam").as_deref() {
+    let status = params.get("viso").or_else(|| params.get("whoiam"));
+    match status.as_deref() {
         Some("denied") => Mode::Denied,
         Some("ok") => match verify_callback(&base, &params) {
             Ok(pk) => Mode::Verified { pk: pk.to_bytes() },
@@ -108,7 +109,7 @@ fn verify_callback(base: &str, params: &web_sys::UrlSearchParams) -> Result<Veri
         .decode(get("sig")?.as_bytes())
         .map_err(|_| "malformed sig")?;
     let sig_arr: [u8; 64] = sig_bytes.try_into().map_err(|_| "sig must be 64 bytes")?;
-    whoiam_core::connect::check_connect(&pk, base, &challenge, ts, &Signature::from_bytes(&sig_arr))
+    viso_core::connect::check_connect(&pk, base, &challenge, ts, &Signature::from_bytes(&sig_arr))
         .map_err(|_| {
             "signature does not verify — impersonation attempt or corrupted callback".to_string()
         })?;
@@ -187,7 +188,7 @@ fn apply_contract(owner: &VerifyingKey, expected: &ContractKey, response: Contra
         *PROFILE.write() = Some(current);
         return;
     }
-    match whoiam_core::from_cbor::<IdentityStateV1>(bytes.as_ref()) {
+    match viso_core::from_cbor::<IdentityStateV1>(bytes.as_ref()) {
         // Untrusted bytes: merge_state re-verifies every slot signature
         // against the proven key before anything is displayed.
         Ok(incoming) => match merge_state(&mut current, &incoming, owner, now_ms_native()) {
@@ -312,7 +313,7 @@ fn leave_to(url: &str) -> Result<(), String> {
     if target.origin() != own.origin() || !is_contract_web_path(&target.pathname()) {
         return match win.open_with_url_and_target(url, "_blank") {
             Ok(_) => Ok(()),
-            Err(_) => Err("couldn't open whoiam — popup blocker?".into()),
+            Err(_) => Err("couldn't open Viso — popup blocker?".into()),
         };
     }
     if own.search_params().get("__sandbox").is_none() {
@@ -410,7 +411,7 @@ fn App() -> Element {
     rsx! {
         style { dangerous_inner_html: include_str!("../../ui/assets/main.css") }
         header { class: "top",
-            span { class: "wordmark", "whoiam connect " span { class: "iam", "demo" } }
+            span { class: "wordmark", "Viso connect " span { class: "iam", "demo" } }
         }
         main {
             section { class: "wrap narrow-wrap",
@@ -427,7 +428,7 @@ fn App() -> Element {
                 {body}
             }
         }
-        footer { class: "foot", "a pretend app that trusts whoiam personas" }
+        footer { class: "foot", "a pretend app that trusts Viso personas" }
     }
 }
 
@@ -472,12 +473,12 @@ fn Landing() -> Element {
 
     rsx! {
         div { class: "card",
-            h2 { "Link a whoiam persona" }
+            h2 { "Link a Viso persona" }
             p { class: "muted",
-                "This pretend app has no accounts of its own. Prove you own a whoiam persona and it will greet you by name — profile fetched straight from the persona's contract, every signature checked."
+                "This pretend app has no accounts of its own. Prove you own a Viso persona and it will greet you by name — profile fetched straight from the persona's contract, every signature checked."
             }
             if !known {
-                label { r#for: "whoiam-url", "Your whoiam URL" }
+                label { r#for: "whoiam-url", "Your Viso URL" }
                 input {
                     id: "whoiam-url",
                     placeholder: "http://127.0.0.1:7509/v1/contract/web/…/",
@@ -498,7 +499,7 @@ fn Landing() -> Element {
                 }
             }
             p { class: "muted",
-                "You'll be taken to whoiam; approving there brings you back here with the proof."
+                "You'll be taken to Viso; approving there brings you back here with the proof."
             }
             if !error.read().is_empty() { p { class: "error", "{error}" } }
         }
@@ -516,23 +517,23 @@ fn VerifiedView(pk: [u8; 32]) -> Element {
         if slot.bytes.is_empty() {
             return None;
         }
-        whoiam_core::from_cbor(&slot.bytes).ok()
+        viso_core::from_cbor(&slot.bytes).ok()
     });
     let avatar: Option<Vec<u8>> = state.as_ref().and_then(|s| {
         let slot = s.slots.get(SLOT_AVATAR)?;
         if slot.bytes.is_empty() {
             return None;
         }
-        whoiam_core::resources::check_avatar_bytes(&slot.bytes).ok()?;
+        viso_core::resources::check_avatar_bytes(&slot.bytes).ok()?;
         Some(slot.bytes.clone())
     });
     let destroyed = state.as_ref().is_some_and(|s| s.destroyed.is_some());
     // Proof-of-commitment level: verified for THIS key and purpose; a real
     // app compares it to its own min_bits policy before accepting writes.
     let ante_bits: Option<u32> = state.as_ref().and_then(|s| {
-        let slot = s.slots.get(whoiam_ante::SLOT_ANTE)?;
+        let slot = s.slots.get(viso_ante::SLOT_ANTE)?;
         let vk = VerifyingKey::from_bytes(&pk).ok()?;
-        whoiam_ante::verify_slot(&vk, &slot.bytes).ok()
+        viso_ante::verify_slot(&vk, &slot.bytes).ok()
     });
     let name = profile.as_ref().map(|p| p.name.clone()).unwrap_or_default();
     let bio = profile.as_ref().map(|p| p.bio.clone()).unwrap_or_default();

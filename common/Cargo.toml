@@ -1,10 +1,10 @@
 [package]
-name = "whoiam-core"
+name = "viso-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Core library for whoiam - identity platform on Freenet"
+description = "Core library for Viso - decentralized identity platform on Freenet"
 
 [dependencies]
 ciborium.workspace = true
