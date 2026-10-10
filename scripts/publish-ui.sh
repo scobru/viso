@@ -12,8 +12,8 @@ cd "$(dirname "$0")/.."
 
 export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 
-KEY_NAME="${WHOIAM_SITE_KEY:-whoiam}"
-SITE_DIR="target/dx/whoiam-ui/release/web/public"
+KEY_NAME="${VISO_SITE_KEY:-viso}"
+SITE_DIR="target/dx/viso-ui/release/web/public"
 
 # dx leaves stale hashed bundles behind; a dirty dir publishes them all.
 rm -rf "$SITE_DIR"

@@ -6,18 +6,18 @@ cd "$(dirname "$0")/.."
 
 export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 
-KEY_NAME="${WHOIAM_DEMO_KEY:-whoiam-demo}"
-SITE_DIR="target/dx/whoiam-demo/release/web/public"
+KEY_NAME="${VISO_DEMO_KEY:-viso-demo}"
+SITE_DIR="target/dx/viso-demo/release/web/public"
 
-# Bake the whoiam site's contract id into the build so the URL field comes
+# Bake the viso site's contract id into the build so the URL field comes
 # prefilled (same-origin as wherever the demo is served from). Defaults to
-# the site published under this key store's "whoiam" key; override with
-# WHOIAM_SITE_CONTRACT, or set it empty to leave the field blank.
-if [ -z "${WHOIAM_SITE_CONTRACT+x}" ]; then
-    WHOIAM_SITE_CONTRACT="$(fdev website list 2>/dev/null | awk '$1 == "whoiam" { print $2 }')"
+# the site published under this key store's "viso" key; override with
+# VISO_SITE_CONTRACT, or set it empty to leave the field blank.
+if [ -z "${VISO_SITE_CONTRACT+x}" ]; then
+    VISO_SITE_CONTRACT="$(fdev website list 2>/dev/null | awk '$1 == "viso" { print $2 }')"
 fi
-export WHOIAM_SITE_CONTRACT
-echo "baking whoiam site contract: ${WHOIAM_SITE_CONTRACT:-<none>}"
+export VISO_SITE_CONTRACT
+echo "baking viso site contract: ${VISO_SITE_CONTRACT:-<none>}"
 
 # dx leaves stale hashed bundles behind; a dirty dir publishes them all.
 rm -rf "$SITE_DIR"

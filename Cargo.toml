@@ -69,6 +69,7 @@ opt-level = 'z'
 [profile.wasm-release]
 inherits = "release"
 opt-level = 'z'
+strip = false
 
 [profile.wasm-dev]
 inherits = "dev"

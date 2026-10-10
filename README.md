@@ -68,11 +68,29 @@ cargo test --workspace
 
 ## Publishing to Freenet
 
+The Viso web app can be published as a Freenet static website contract using `fdev`:
+
 ```sh
-cd ui && dx build --release
+# Via PowerShell (Windows):
+./scripts/publish-ui.ps1
+
+# Or via Bash (Linux / macOS):
+./scripts/publish-ui.sh
+```
+
+Or manually:
+
+```sh
+cd ui && dx build --release --base-path "."
 fdev website init viso
 fdev website publish --key viso target/dx/viso-ui/release/web/public
 ```
+
+Once published on your local node, open:
+`http://127.0.0.1:7509/v1/contract/web/<CONTRACT_KEY>/`
+
+Published site key: `viso`  
+Website Contract Address: `GzHy3jnEtj26EoGqMsBpoawcY378hK9kp91rTcNYiAac`
 
 ## Roadmap
 

@@ -1,9 +1,12 @@
 //! UI components. One file — the phase-1 surface is small.
 
 use dioxus::prelude::*;
-use viso_core::resources::{ProfileV1, MAX_BIO_CHARS, MAX_NAME_CHARS, SLOT_AVATAR, SLOT_PROFILE};
+#[allow(unused_imports)]
+use viso_core::resources::{ProfileV1, MAX_AVATAR_BYTES, MAX_BIO_CHARS, MAX_NAME_CHARS, SLOT_AVATAR, SLOT_PROFILE};
 
 use crate::actions;
+#[allow(unused_imports)]
+use crate::api;
 use crate::state::*;
 
 const KEY_STORE_TIMEOUT_MS: u32 = 12_000;

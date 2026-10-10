@@ -25,7 +25,7 @@ contracts:
 	$(MAKE) check-addresses
 
 delegate:
-	$(CARGO) build -p whoiam-delegate --target $(WASM_TARGET) --release
+	$(CARGO) build -p viso-delegate --target $(WASM_TARGET) --release
 	$(MAKE) check-imports W=$(WASM_DIR)/whoiam_delegate.wasm
 	cp $(WASM_DIR)/whoiam_delegate.wasm ui/contracts/
 	$(MAKE) check-addresses
