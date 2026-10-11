@@ -74,7 +74,7 @@ fn avatar_data_url(bytes: &[u8]) -> String {
 /// Trust boundary: a malformed request is logged and ignored — the app just
 /// boots normally.
 #[cfg(target_arch = "wasm32")]
-fn connect_request_from_location() -> Option<ConnectRequest> {
+pub fn connect_request_from_location() -> Option<ConnectRequest> {
     let search = web_sys::window()?.location().search().ok()?;
     let params = web_sys::UrlSearchParams::new_with_str(&search).ok()?;
     if params.get("connect")? != "v1" {
@@ -87,14 +87,14 @@ fn connect_request_from_location() -> Option<ConnectRequest> {
         api::log("connect request ignored: bad challenge");
         return None;
     }
-    // Absolute http(s) URL, no fragment (a fragment would swallow the
-    // params we append).
+    // Absolute http(s) URL. If a fragment is present, it will be retained
+    // in return_url and preserved by callback_url when appending parameters.
     let Ok(url) = web_sys::Url::new(&return_url) else {
         api::log("connect request ignored: unparseable return URL");
         return None;
     };
-    if !matches!(url.protocol().as_str(), "http:" | "https:") || !url.hash().is_empty() {
-        api::log("connect request ignored: return URL must be http(s) with no fragment");
+    if !matches!(url.protocol().as_str(), "http:" | "https:") {
+        api::log("connect request ignored: return URL must be http(s)");
         return None;
     }
     Some(ConnectRequest {
@@ -103,6 +103,11 @@ fn connect_request_from_location() -> Option<ConnectRequest> {
         return_url,
         challenge,
     })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn connect_request_from_location() -> Option<ConnectRequest> {
+    None
 }
 
 /// Mirrors the shell bridge's CONTRACT_PREFIX_RE: `/^\/v[12]\/contract\/web\/[^/]+\//`
@@ -389,8 +394,8 @@ pub fn App() -> Element {
         style { dangerous_inner_html: include_str!("../assets/main.css") }
         header { class: "top",
             button { class: "wordmark", onclick: move |_| *VIEW.write() = View::Home,
-                span { class: "who", "who" }
-                span { class: "iam", "iam" }
+                span { class: "vi", "vi" }
+                span { class: "so", "so" }
             }
             StatusDot {}
         }

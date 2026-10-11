@@ -67,7 +67,9 @@ header.top {
   padding: 0;
   font-family: inherit;
 }
+.wordmark .vi,
 .wordmark .who { color: var(--text); }
+.wordmark .so,
 .wordmark .iam { color: var(--accent-a); }
 
 .dot {

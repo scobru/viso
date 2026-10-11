@@ -389,8 +389,13 @@ pub fn valid_challenge(c: &str) -> bool {
 }
 
 fn callback_url(return_url: &str, params: &str) -> String {
-    let sep = if return_url.contains('?') { '&' } else { '?' };
-    format!("{return_url}{sep}{params}")
+    if let Some((base, hash)) = return_url.split_once('#') {
+        let sep = if base.contains('?') { '&' } else { '?' };
+        format!("{base}{sep}{params}#{hash}")
+    } else {
+        let sep = if return_url.contains('?') { '&' } else { '?' };
+        format!("{return_url}{sep}{params}")
+    }
 }
 
 /// The signed approval callback URL: proof that this persona's key consented
@@ -455,6 +460,8 @@ mod tests {
     fn callback_url_separator() {
         assert_eq!(callback_url("https://x.com/cb", "viso=denied"), "https://x.com/cb?viso=denied");
         assert_eq!(callback_url("https://x.com/cb?a=1", "viso=denied"), "https://x.com/cb?a=1&viso=denied");
+        assert_eq!(callback_url("https://x.com/cb#/mine", "viso=denied"), "https://x.com/cb?viso=denied#/mine");
+        assert_eq!(callback_url("https://x.com/cb?a=1#/mine", "viso=denied"), "https://x.com/cb?a=1&viso=denied#/mine");
     }
 
     /// The whole point of a backup: both encodings in the file must parse

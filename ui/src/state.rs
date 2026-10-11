@@ -53,7 +53,8 @@ pub struct ConnectRequest {
     pub challenge: String,
 }
 
-pub static CONNECT: GlobalSignal<Option<ConnectRequest>> = Signal::global(|| None);
+pub static CONNECT: GlobalSignal<Option<ConnectRequest>> =
+    Signal::global(crate::views::connect_request_from_location);
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum View {
