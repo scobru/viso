@@ -9,9 +9,14 @@ $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 $KeyName = if ($env:VISO_SITE_KEY) { $env:VISO_SITE_KEY } else { "viso" }
 $SiteDir = Join-Path $RepoRoot "target\dx\viso-ui\release\web\public"
 
+# dx leaves stale hashed bundles behind; clean before building
+if (Test-Path $SiteDir) {
+    Remove-Item -Recurse -Force $SiteDir
+}
+
 Write-Host "Building Viso UI with Dioxus..." -ForegroundColor Cyan
 Set-Location (Join-Path $RepoRoot "ui")
-& dx build --release --base-path "."
+& dx build --release --debug-symbols false --base-path "."
 $buildStatus = $LASTEXITCODE
 Set-Location $RepoRoot
 if ($buildStatus -ne 0) {

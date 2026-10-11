@@ -75,34 +75,96 @@ fn avatar_data_url(bytes: &[u8]) -> String {
 /// boots normally.
 #[cfg(target_arch = "wasm32")]
 pub fn connect_request_from_location() -> Option<ConnectRequest> {
-    let search = web_sys::window()?.location().search().ok()?;
-    let params = web_sys::UrlSearchParams::new_with_str(&search).ok()?;
-    if params.get("connect")? != "v1" {
-        api::log("connect request ignored: unknown version");
-        return None;
-    }
-    let challenge = params.get("challenge")?;
-    let return_url = params.get("return")?;
-    if !actions::valid_challenge(&challenge) {
-        api::log("connect request ignored: bad challenge");
-        return None;
-    }
-    // Absolute http(s) URL. If a fragment is present, it will be retained
-    // in return_url and preserved by callback_url when appending parameters.
-    let Ok(url) = web_sys::Url::new(&return_url) else {
-        api::log("connect request ignored: unparseable return URL");
-        return None;
+    let win = web_sys::window()?;
+    let loc = win.location();
+
+    let search = loc.search().unwrap_or_default();
+    let href = loc.href().unwrap_or_default();
+    let hash = loc.hash().unwrap_or_default();
+
+    api::log(&format!("[viso] checking connect params: search='{search}', href='{href}', hash='{hash}'"));
+
+    let parse_from_candidate = |candidate: &str| -> Option<ConnectRequest> {
+        if candidate.is_empty() {
+            return None;
+        }
+
+        // Decode HTML entities if present (e.g. from iframe data-src attribute)
+        let unescaped = candidate.replace("&amp;", "&");
+
+        // Find query part: after '?' if present, otherwise whole string
+        let query_str = if let Some(idx) = unescaped.find('?') {
+            &unescaped[idx..]
+        } else {
+            &unescaped
+        };
+
+        let params = web_sys::UrlSearchParams::new_with_str(query_str).ok()?;
+
+        // Support both regular keys and keys prefixed with amp;
+        let get_val = |key: &str| -> Option<String> {
+            params.get(key).or_else(|| params.get(&format!("amp;{key}")))
+        };
+
+        let connect_ver = get_val("connect")?;
+        if connect_ver != "v1" {
+            api::log(&format!("[viso] connect request ignored: version '{connect_ver}' != 'v1'"));
+            return None;
+        }
+
+        let challenge = match get_val("challenge") {
+            Some(c) => c,
+            None => {
+                api::log("[viso] connect request ignored: missing challenge");
+                return None;
+            }
+        };
+
+        let return_url = match get_val("return") {
+            Some(r) => r,
+            None => {
+                api::log("[viso] connect request ignored: missing return URL");
+                return None;
+            }
+        };
+
+        if !actions::valid_challenge(&challenge) {
+            api::log(&format!("[viso] connect request ignored: invalid challenge '{challenge}'"));
+            return None;
+        }
+
+        let Ok(url) = web_sys::Url::new(&return_url) else {
+            api::log(&format!("[viso] connect request ignored: unparseable return URL '{return_url}'"));
+            return None;
+        };
+
+        if !matches!(url.protocol().as_str(), "http:" | "https:") {
+            api::log(&format!("[viso] connect request ignored: return URL must be http(s), got '{}'", url.protocol()));
+            return None;
+        }
+
+        api::log(&format!("[viso] connect request validated: origin='{}', return_base='{}{}', return_url='{return_url}', challenge='{challenge}'", url.origin(), url.origin(), url.pathname()));
+
+        Some(ConnectRequest {
+            origin: url.origin(),
+            return_base: format!("{}{}", url.origin(), url.pathname()),
+            return_url,
+            challenge,
+        })
     };
-    if !matches!(url.protocol().as_str(), "http:" | "https:") {
-        api::log("connect request ignored: return URL must be http(s)");
-        return None;
+
+    if let Some(req) = parse_from_candidate(&search) {
+        return Some(req);
     }
-    Some(ConnectRequest {
-        origin: url.origin(),
-        return_base: format!("{}{}", url.origin(), url.pathname()),
-        return_url,
-        challenge,
-    })
+    if let Some(req) = parse_from_candidate(&href) {
+        return Some(req);
+    }
+    if let Some(req) = parse_from_candidate(&hash) {
+        return Some(req);
+    }
+
+    api::log("[viso] no valid connect request found in location");
+    None
 }
 
 #[cfg(not(target_arch = "wasm32"))]

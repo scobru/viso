@@ -2,3 +2,6 @@
 
 [web.app]
 title = "Viso"
+
+[web.wasm_opt]
+debug = false
