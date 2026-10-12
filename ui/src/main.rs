@@ -23,5 +23,17 @@ pub async fn sleep_ms(ms: u32) {
 }
 
 fn main() {
+    // `dx build --base-path .` gives Dioxus' default WebHistory a "/." prefix that never matches
+    // /v1/contract/web/<key>/, so its startup replaceState rewrites the URL to "/" and drops
+    // ?connect=… before we parse it. Prefix with the real path so that replaceState is a no-op.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let path = web_sys::window().and_then(|w| w.location().pathname().ok());
+        let history = dioxus::web::WebHistory::new(path, true);
+        dioxus::LaunchBuilder::new()
+            .with_cfg(dioxus::web::Config::new().history(std::rc::Rc::new(history)))
+            .launch(views::App);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     dioxus::launch(views::App);
 }
