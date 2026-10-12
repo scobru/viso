@@ -4,6 +4,7 @@ This guide explains how to integrate **Viso** into your Freenet application:
 1. **Connect Flow ("Sign in with Viso")**: Authenticate users without passwords or centralized servers.
 2. **Reading Persona Data**: Retrieve public profiles (`name`, `bio`) and avatars.
 3. **Anti-Spam & Sybil Resistance**: Verify the persona's proof-of-commitment level (`ante` slot).
+4. **Writing as a persona**: let one sign-in authorize an app key that signs your contract writes.
 
 Ready-to-use implementations are provided for both **TypeScript / JavaScript** (for web dApps) and **Rust** (for backend/native nodes).
 
@@ -222,3 +223,76 @@ function canUserPost(personaAnteBits: number | null): boolean {
 ```
 
 See [docs/mining-and-ante.md](mining-and-ante.md) for full details on how mining works and how to set appropriate difficulty thresholds.
+
+---
+
+## 5. Writing as a Persona: Delegating to an App Key
+
+The connect flow proves *who* the user is, once. But Viso never signs your app's data: your contracts need every write (a post, a vote, a list) signed, and you cannot send the user back to Viso for each one. The pattern used by [FreePolls](https://github.com/scobru/freepolls), [FreeNames](https://github.com/scobru/freenames) and [FH](https://github.com/scobru/FH): **the sign-in authorizes an app key**, and the app key signs the writes.
+
+### How it works
+
+1. On each node your app keeps a random Ed25519 **app key** (in a delegate store or `localStorage`; inside the sandboxed web container pages have no storage, so FreePolls ships a small per-app identity delegate).
+2. The connect flow uses the challenge **`wd1.<app key hex>.<random nonce>`**. Viso signs it for your `return` URL, so the proof says: *this app key may act for me in the app served at this path*.
+3. Keep the proof as a **certificate**: `{ base, challenge, ts, sig }` (`base` = your `return` URL, `sig` = Viso's signature).
+4. Every write is signed by the app key with a domain-separated message (e.g. `myapp-post1|<params>|<ts>|<body>`) and carries the certificate.
+5. Your contract checks, for each write: the certificate's path is the app path in the contract's **parameters**, Viso's signature over the certificate holds for the persona, the app key is the one in the challenge, and the app key signed the write.
+
+Put the app path (`/v1/contract/web/<your app id>/`) in your contracts' parameters, next to the persona key: a delegation made for another app is then useless in yours, and the same app on another node (other host) still works, because only the path is compared.
+
+### In the contract (Rust)
+
+The [`whoiam-delegation`](https://github.com/scobru/freenames/tree/main/delegation) crate does the checks (no Freenet dependency):
+
+```toml
+whoiam-delegation = { git = "https://github.com/scobru/freenames", rev = "d6dc35f8d0d85c0d95430c5da3c3eeb8e9ee9120" }
+```
+
+```rust
+use whoiam_delegation::{check, verify, Cert, R};
+
+/// params = persona (32 bytes) || app path
+fn check_write(params: &[u8], body: &str, ts: u64, sig: &str, cert: &Cert) -> R<()> {
+    let persona = hex::encode(&params[..32]);
+    let app = std::str::from_utf8(&params[32..]).map_err(|e| e.to_string())?;
+    let app_key = check(&persona, app, cert)?; // path, Viso's signature, `wd1.` challenge
+    verify(&app_key, format!("myapp-post1|{}|{ts}|{body}", hex::encode(params)).as_bytes(), sig)
+}
+```
+
+Merges must converge in any order: keep, per item, the newest signed write (ties broken by signature), as FH's list contract does.
+
+### In the web app (TypeScript)
+
+```ts
+import * as ed from "@noble/ed25519";
+const hex = ed.etc.bytesToHex, enc = new TextEncoder();
+const APP_PATH = location.pathname;                                  // e.g. /v1/contract/web/<your app id>/
+const linkBase = () => `${location.protocol}//${location.host}${APP_PATH}`;
+
+// 1. start: remember a one-time challenge naming this node's app key, then go to Viso (through the shell)
+const appKey = hex(await ed.getPublicKeyAsync(appSecret));
+const challenge = `wd1.${appKey}.${hex(crypto.getRandomValues(new Uint8Array(16)))}`;
+await storePut("signin-pending", challenge);
+goTo(`${visoUrl}?connect=v1&challenge=${challenge}&return=${encodeURIComponent(linkBase())}`);
+
+// 2. callback (?viso=ok&pk&sig&challenge&ts): burn the challenge, check freshness and Viso's signature (section 2)
+const cert = { base: linkBase(), challenge: q.get("challenge")!, ts: Number(q.get("ts")), sig: q.get("sig")! };
+await storePut("session", JSON.stringify({ persona: q.get("pk"), cert }));
+
+// 3. every write: sign with the app key, send the certificate along
+const sig = hex(await ed.signAsync(enc.encode(`myapp-post1|${paramsHex}|${ts}|${body}`), appSecret));
+```
+
+Complete versions, with the identity delegate fallback: FreePolls `ui/src/lib.ts` (`startSignIn`, `finishSignIn`, `session`), FH `src/sync.ts`.
+
+### Without Viso: an identity made in the app
+
+Users without Viso can create a key in your app: the app signs the very same certificate with that key (`connectMessage(persona, base, challenge, ts)`), so contracts cannot tell the difference. Show the key once for backup: pasting it in any app that uses this pattern, on any node, brings the same identity back. See `createLocalIdentity` in FreePolls or FH.
+
+### Things to know
+
+- **No expiry, no revocation yet.** Contracts have no clock, so a certificate is valid forever: whoever controls a node the user signed in from can keep writing as the persona in that app.
+- **Viso's screen says "sign in to <origin>"**, not "authorize this key". Tell users in your app what signing in allows.
+- **One app key per node.** A new node is a new sign-in; the persona, not the key, owns the data. If the app key changes, ask the user to sign in again.
+- **Keep anonymous keys apart.** Certificates are public: never reuse the delegated app key for actions that must not be linked to the persona (FreePolls keeps respondents' keys separate).
