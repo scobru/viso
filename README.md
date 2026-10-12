@@ -36,7 +36,7 @@ everywhere.
 
 ## Guides & Documentation
 
-- [**Integrating Viso into a dApp**](docs/dapp-integration.md): Step-by-step guide with **TypeScript / JavaScript** and **Rust** examples for the Connect flow ("Sign in with Viso"), profile reading, and avatar loading.
+- [**Integrating Viso into a dApp**](docs/dapp-integration.md): Step-by-step guide with **TypeScript / JavaScript** and **Rust** examples for the Connect flow ("Sign in with Viso"), profile reading, avatar loading, and writing as a persona through a delegated app key.
 - [**Mining & Proof of Commitment (`ante`)**](docs/mining-and-ante.md): Everything about persona-level mining, BLAKE3 PoW mechanics, grinding in the UI, and implementing anti-spam policies.
 - [**Public Resources & Slots Specification**](docs/resources.md): Full specification of slots (`profile`, `avatar`, `ante`), lifecycle rules, and wire formats.
 
