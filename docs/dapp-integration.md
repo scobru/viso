@@ -36,6 +36,7 @@ http://<node-host>:7509/v1/contract/web/<VISO_SITE_CONTRACT_KEY>/?connect=v1&cha
 
 - `challenge`: Random string (`[A-Za-z0-9._~-]`, ≤ 256 characters). Store this in your app session or memory to verify upon return.
 - `return`: URL-encoded callback URL (must match the app's current origin + pathname).
+- `base` (optional): a canonical origin+pathname to sign instead of `return`'s, e.g. `http://127.0.0.1:7509/v1/contract/web/<APP_KEY>/`. It is used only when its path equals `return`'s path (and it has no query or fragment); otherwise Viso signs `return`'s origin+path as before. Use it when your app publishes the certificate, so the user's node host is not exposed. Verify the proof against the base you sent, and fall back to your own origin+pathname for a Viso that ignores `base`.
 - `<VISO_SITE_CONTRACT_KEY>`: The contract key of the Viso site (e.g. `GzHy3jnEtj26EoGqMsBpoawcY378hK9kp91rTcNYiAac` on local test nodes).
 
 > **Navigation note in Freenet Sandbox:**  

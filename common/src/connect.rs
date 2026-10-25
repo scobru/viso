@@ -28,6 +28,25 @@ fn connect_message(pk: &VerifyingKey, return_base: &str, challenge: &str, time_m
     m
 }
 
+/// `scheme://host/path` -> `/path`; None unless http(s) with no query or fragment.
+fn path_of(base: &str) -> Option<&str> {
+    let rest = base.strip_prefix("http://").or_else(|| base.strip_prefix("https://"))?;
+    if rest.contains(['?', '#']) {
+        return None;
+    }
+    Some(&rest[rest.find('/')?..])
+}
+
+/// What the proof is bound to. An app may ask for a canonical `requested` base (its published certificate then
+/// shows no node host) when its path is the callback's: the path is what tells apps on one node apart.
+/// Anything else falls back to the callback's own origin+path.
+pub fn signing_base(return_base: &str, requested: Option<&str>) -> String {
+    match requested {
+        Some(r) if path_of(r).is_some() && path_of(r) == path_of(return_base) => r.to_string(),
+        _ => return_base.to_string(),
+    }
+}
+
 pub fn sign_connect(sk: &SigningKey, return_base: &str, challenge: &str, time_ms: u64) -> Signature {
     sk.sign(&connect_message(&sk.verifying_key(), return_base, challenge, time_ms))
 }
@@ -80,6 +99,18 @@ mod tests {
         let pk = sk.verifying_key();
         let sig = sign_connect(&sk, BASE, "abc", 1000);
         assert!(check_connect(&pk, &format!("{BASE}a"), "bc", 1000, &sig).is_err());
+    }
+
+    #[test]
+    fn signing_base_only_swaps_the_host() {
+        let ret = "http://192.168.1.7:7509/v1/contract/web/App1/";
+        let canon = "http://127.0.0.1:7509/v1/contract/web/App1/";
+        assert_eq!(signing_base(ret, Some(canon)), canon);
+        assert_eq!(signing_base(ret, None), ret);
+        // another app's path, a query, or a non-http scheme are ignored
+        assert_eq!(signing_base(ret, Some("http://127.0.0.1:7509/v1/contract/web/Other/")), ret);
+        assert_eq!(signing_base(ret, Some("http://127.0.0.1:7509/v1/contract/web/App1/?x=1")), ret);
+        assert_eq!(signing_base(ret, Some("javascript:/v1/contract/web/App1/")), ret);
     }
 
     /// Wire-frozen: a format change here invalidates proofs against every

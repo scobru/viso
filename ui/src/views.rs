@@ -143,11 +143,14 @@ pub fn connect_request_from_location() -> Option<ConnectRequest> {
             return None;
         }
 
+        let return_base = format!("{}{}", url.origin(), url.pathname());
+        let return_base = viso_core::connect::signing_base(&return_base, get_val("base").as_deref());
+
         api::log(&format!("[viso] connect request validated: origin='{}', return_base='{}{}', return_url='{return_url}', challenge='{challenge}'", url.origin(), url.origin(), url.pathname()));
 
         Some(ConnectRequest {
             origin: url.origin(),
-            return_base: format!("{}{}", url.origin(), url.pathname()),
+            return_base,
             return_url,
             challenge,
         })
