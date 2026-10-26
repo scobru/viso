@@ -324,6 +324,35 @@ pub async fn attach_ghostkey(index: u32, bundle_b64: String) -> Result<(), Strin
     publish_slot(index, viso_core::resources::SLOT_GHOSTKEY, bundle).await
 }
 
+/// Ask the user's ghostkeys delegate to sign the binding for this persona
+/// (it prompts for access itself), then publish the verified result.
+pub async fn request_ghostkey_badge(index: u32) -> Result<(), String> {
+    use ghostkey_common::{GhostkeyRequest, GhostkeyResponse};
+    let pk = identity_pubkey(index).ok_or("no identity")?;
+    *api::GHOSTKEY_REPLY.write() = None;
+    api::ghostkey_request(GhostkeyRequest::SignWithDefault {
+        message: viso_core::ghostkey::binding_payload(&pk.to_bytes()),
+    })
+    .await?;
+    // The user may have to approve a prompt, so wait generously.
+    wait_until(|| api::GHOSTKEY_REPLY.peek().is_some(), 120_000, "ghostkey signature").await?;
+    match api::GHOSTKEY_REPLY.write().take() {
+        Some(GhostkeyResponse::SignResult { scoped_payload, signature, certificate_pem }) => {
+            let bundle = viso_core::ghostkey::bundle_from_sign_result(scoped_payload, signature, certificate_pem)?;
+            viso_core::ghostkey::verify_badge(&bundle, &pk.to_bytes())?;
+            publish_slot(index, viso_core::resources::SLOT_GHOSTKEY, bundle).await
+        }
+        Some(GhostkeyResponse::NoIdentityAvailable) => {
+            Err("could not find a ghostkey on this node".into())
+        }
+        Some(GhostkeyResponse::PermissionDenied { .. } | GhostkeyResponse::AccessDenied { .. }) => {
+            Err("ghostkey access denied".into())
+        }
+        Some(GhostkeyResponse::Error { message }) => Err(message),
+        _ => Err("unexpected ghostkeys reply".into()),
+    }
+}
+
 pub async fn remove_ghostkey(index: u32) -> Result<(), String> {
     publish_slot(index, viso_core::resources::SLOT_GHOSTKEY, vec![]).await
 }

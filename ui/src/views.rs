@@ -1185,8 +1185,19 @@ fn PersonaGhostkey(index: u32) -> Element {
                     }
                 },
                 None => rsx! {
+                    button { class: "primary", disabled: *busy.read(),
+                        onclick: move |_| {
+                            busy.set(true);
+                            err.set(String::new());
+                            spawn(async move {
+                                if let Err(e) = actions::request_ghostkey_badge(index).await { err.set(e); }
+                                busy.set(false);
+                            });
+                        },
+                        "Sign with my ghostkey"
+                    }
                     p { class: "muted small",
-                        "1. Have your ghostkey sign this hex payload (ghostkeys delegate SignMessage). 2. Paste the base64 of the signed bundle."
+                        "Or by hand: 1. Have your ghostkey sign this hex payload (ghostkeys delegate SignMessage). 2. Paste the base64 of the signed bundle."
                     }
                     code { class: "small", "{payload}" }
                     textarea { value: "{input}", oninput: move |e| input.set(e.value()), placeholder: "signed bundle (base64)" }

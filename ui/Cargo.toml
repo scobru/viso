@@ -15,6 +15,8 @@ serde.workspace = true
 serde_bytes.workspace = true
 bs58.workspace = true
 base64 = "0.22"
+# Wire types for the ghostkeys delegate (same freenet-stdlib 0.8 line).
+ghostkey-common = "0.3"
 data-encoding.workspace = true
 ed25519-dalek = { workspace = true, features = ["rand_core"] }
 rand.workspace = true
@@ -47,4 +49,5 @@ web-sys = { version = "0.3", features = [
     "Blob",
     "BlobPropertyBag",
     "Url",
+    "Response",
 ] }
