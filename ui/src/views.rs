@@ -1024,6 +1024,7 @@ fn Detail(index: u32) -> Element {
             }
 
             PersonaLevel { index }
+            PersonaGhostkey { index }
 
             div { class: "card",
                 h3 { "Share with apps" }
@@ -1149,3 +1150,64 @@ fn PersonaLevel(index: u32) -> Element {
     }
 }
 
+
+/// Optional Freenet ghostkey badge. Reveals donation tier/date to anyone who
+/// fetches this persona, so it is opt-in and removable.
+#[component]
+fn PersonaGhostkey(index: u32) -> Element {
+    let mut input = use_signal(String::new);
+    let mut busy = use_signal(|| false);
+    let mut err = use_signal(String::new);
+    let badge = actions::persona_ghostkey(index);
+    let payload = actions::identity_pubkey(index)
+        .map(|pk| data_encoding::HEXLOWER.encode(&viso_core::ghostkey::binding_payload(&pk.to_bytes())))
+        .unwrap_or_default();
+
+    rsx! {
+        div { class: "card",
+            h3 { "Freenet ghostkey" }
+            p { class: "muted",
+                "Prove this persona belongs to a Freenet donor without saying who. Publishing reveals your donation tier and date to anyone who fetches this persona."
+            }
+            match badge.clone() {
+                Some(b) => rsx! {
+                    p { strong { "{b.fingerprint}" } " · " span { class: "muted", "{b.info}" } }
+                    button { class: "ghost", disabled: *busy.read(),
+                        onclick: move |_| {
+                            busy.set(true);
+                            err.set(String::new());
+                            spawn(async move {
+                                if let Err(e) = actions::remove_ghostkey(index).await { err.set(e); }
+                                busy.set(false);
+                            });
+                        },
+                        "Remove badge"
+                    }
+                },
+                None => rsx! {
+                    p { class: "muted small",
+                        "1. Have your ghostkey sign this hex payload (ghostkeys delegate SignMessage). 2. Paste the base64 of the signed bundle."
+                    }
+                    code { class: "small", "{payload}" }
+                    textarea { value: "{input}", oninput: move |e| input.set(e.value()), placeholder: "signed bundle (base64)" }
+                    button { class: "primary", disabled: *busy.read() || input.read().trim().is_empty(),
+                        onclick: move |_| {
+                            busy.set(true);
+                            err.set(String::new());
+                            let v = input.read().clone();
+                            spawn(async move {
+                                match actions::attach_ghostkey(index, v).await {
+                                    Ok(()) => input.set(String::new()),
+                                    Err(e) => err.set(e),
+                                }
+                                busy.set(false);
+                            });
+                        },
+                        "Attach badge"
+                    }
+                },
+            }
+            if !err.read().is_empty() { p { class: "error", "{err}" } }
+        }
+    }
+}

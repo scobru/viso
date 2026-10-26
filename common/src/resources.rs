@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 pub const SLOT_PROFILE: &str = "profile";
 pub const SLOT_AVATAR: &str = "avatar";
+/// Optional Freenet ghostkey proof (see `ghostkey` module, feature `ghostkey`).
+pub const SLOT_GHOSTKEY: &str = "ghostkey";
 
 pub const MAX_NAME_CHARS: usize = 64;
 pub const MAX_BIO_CHARS: usize = 280;

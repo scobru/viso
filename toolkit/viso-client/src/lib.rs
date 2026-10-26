@@ -59,6 +59,10 @@ pub struct Identity {
     /// Proof-of-commitment level (leading-zero bits) from the `ante` slot,
     /// already verified for this key and purpose. Apply your own threshold.
     pub ante_bits: Option<u32>,
+    /// Freenet ghostkey proof from the `ghostkey` slot, verified against the
+    /// Freenet master key and bound to this identity. `None` if absent or
+    /// invalid — a bad proof is dropped, not a fetch failure.
+    pub ghostkey: Option<viso_core::ghostkey::GhostkeyBadge>,
     pub raw_slots: BTreeMap<String, Vec<u8>>,
 }
 
@@ -146,11 +150,15 @@ pub(crate) fn identity_from_state(
         .get(viso_ante::SLOT_ANTE)
         .map(|b| viso_ante::verify_slot(pk, b).map_err(FetchError::Malformed))
         .transpose()?;
+    let ghostkey = raw_slots
+        .get(viso_core::resources::SLOT_GHOSTKEY)
+        .and_then(|b| viso_core::ghostkey::verify_badge(b, pk.as_bytes()).ok());
     Ok(Identity {
         pubkey: *pk,
         profile,
         avatar,
         ante_bits,
+        ghostkey,
         raw_slots,
     })
 }

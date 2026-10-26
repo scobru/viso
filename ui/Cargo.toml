@@ -7,7 +7,7 @@ repository.workspace = true
 description = "Viso web UI (Dioxus)"
 
 [dependencies]
-viso-core.workspace = true
+viso-core = { workspace = true, features = ["ghostkey"] }
 viso-ante.workspace = true
 freenet-stdlib = { workspace = true, features = ["net"] }
 ciborium.workspace = true
