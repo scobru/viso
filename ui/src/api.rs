@@ -238,12 +238,75 @@ pub async fn kv_request(request: WhoiamDelegateRequest) -> Result<(), String> {
     .await
 }
 
+// ---- ghostkeys delegate ----
+
+/// Vault webapp contract id; fixed (ghostkeys README). It publishes the
+/// current delegate key — never bake the delegate key itself in.
+const GHOSTKEYS_VAULT: &str = "DLog47hEsrtuGT4N5XCeMBG45m4n1aWM89tBZXue2E1N";
+
+/// Resolved ghostkeys delegate (per session; re-fetched on fresh load).
+static GHOSTKEY_KEY: GlobalSignal<Option<DelegateKey>> = Signal::global(|| None);
+/// Latest ghostkeys delegate reply. No request ids, so callers clear it
+/// before sending and poll for the next one.
+pub static GHOSTKEY_REPLY: GlobalSignal<Option<ghostkey_common::GhostkeyResponse>> =
+    Signal::global(|| None);
+
+async fn resolve_ghostkey_delegate() -> Result<DelegateKey, String> {
+    use wasm_bindgen::JsCast;
+    if let Some(k) = GHOSTKEY_KEY.peek().clone() {
+        return Ok(k);
+    }
+    let win = web_sys::window().ok_or("no window")?;
+    let url = format!("/v1/contract/web/{GHOSTKEYS_VAULT}/delegate-key.json");
+    let err = |e: wasm_bindgen::JsValue| format!("ghostkeys not available on this node: {e:?}");
+    let resp = wasm_bindgen_futures::JsFuture::from(win.fetch_with_str(&url)).await.map_err(err)?;
+    let resp: web_sys::Response = resp.dyn_into().map_err(err)?;
+    if !resp.ok() {
+        return Err("ghostkeys not available on this node".into());
+    }
+    let json = wasm_bindgen_futures::JsFuture::from(resp.json().map_err(err)?).await.map_err(err)?;
+    let bytes = |field: &str| -> Result<[u8; 32], String> {
+        let v = js_sys::Reflect::get(&json, &field.into()).map_err(err)?;
+        js_sys::Uint8Array::new(&v)
+            .to_vec()
+            .try_into()
+            .map_err(|_| format!("ghostkeys delegate-key.json: bad {field}"))
+    };
+    let key = DelegateKey::new(bytes("delegate_key_bytes")?, CodeHash::new(bytes("code_hash_bytes")?));
+    *GHOSTKEY_KEY.write() = Some(key.clone());
+    Ok(key)
+}
+
+/// Send a request to the ghostkeys delegate; the reply lands in
+/// [`GHOSTKEY_REPLY`]. The delegate itself prompts the user for access.
+pub async fn ghostkey_request(request: ghostkey_common::GhostkeyRequest) -> Result<(), String> {
+    let key = resolve_ghostkey_delegate().await?;
+    let payload = viso_core::to_cbor(&request)?;
+    send(ClientRequest::DelegateOp(DelegateRequest::ApplicationMessages {
+        key,
+        params: Parameters::from(Vec::<u8>::new()),
+        inbound: vec![InboundDelegateMsg::ApplicationMessage(ApplicationMessage::new(payload))],
+    }))
+    .await
+}
+
 // ---- response dispatch ----
 
 fn dispatch(response: HostResponse) {
     match response {
         HostResponse::ContractResponse(cr) => dispatch_contract(cr),
         HostResponse::DelegateResponse { key, values } => {
+            if GHOSTKEY_KEY.peek().as_ref() == Some(&key) {
+                for out in values {
+                    if let OutboundDelegateMsg::ApplicationMessage(m) = out {
+                        match viso_core::from_cbor(m.payload.as_ref()) {
+                            Ok(r) => *GHOSTKEY_REPLY.write() = Some(r),
+                            Err(e) => log(&format!("ghostkeys reply undecodable: {e}")),
+                        }
+                    }
+                }
+                return;
+            }
             if key != whoiam_delegate_key() {
                 return;
             }

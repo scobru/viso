@@ -40,6 +40,15 @@ pub fn binding_payload(identity_pubkey: &[u8; 32]) -> Vec<u8> {
     [BIND_TAG, identity_pubkey].concat()
 }
 
+/// Package the delegate's `SignResult` fields into the stored bundle.
+pub fn bundle_from_sign_result(
+    scoped_payload: Vec<u8>,
+    signature: Vec<u8>,
+    certificate_pem: String,
+) -> Result<Vec<u8>, String> {
+    crate::to_cbor(&SignedBundle { scoped_payload, signature, certificate_pem })
+}
+
 pub fn verify_badge(bundle: &[u8], identity_pubkey: &[u8; 32]) -> Result<GhostkeyBadge, String> {
     verify_with(bundle, identity_pubkey, &None)
 }
@@ -85,12 +94,9 @@ mod tests {
         let (cert, sk) = GhostkeyCertificateV1::new(&notary, &notary_sk);
         let scoped = crate::to_cbor(&serde_json_free_scoped(payload)).unwrap();
         let sig = sk.sign(&scoped).to_bytes().to_vec();
-        let bundle = SignedBundle {
-            scoped_payload: scoped,
-            signature: sig,
-            certificate_pem: cert.to_armored_string().unwrap(),
-        };
-        (crate::to_cbor(&bundle).unwrap(), master_vk)
+        let bundle =
+            bundle_from_sign_result(scoped, sig, cert.to_armored_string().unwrap()).unwrap();
+        (bundle, master_vk)
     }
 
     #[derive(Serialize)]
