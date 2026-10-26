@@ -140,6 +140,10 @@ pub fn backup_text() -> Result<String, String> {
 /// ponytail: fixed 8s window + 16-index cap instead of true gap detection —
 /// add response-driven probing if identities beyond 16 become real.
 pub async fn restore_seed(input: String) -> Result<(), String> {
+    restore_seed_opts(input, false).await
+}
+
+pub async fn restore_seed_opts(input: String, ensure_index_zero: bool) -> Result<(), String> {
     const PROBE_LIMIT: u32 = 16;
     let s = parse_backup(&input)?;
     kv_store_confirmed(KEY_SEED, s.to_vec()).await?;
@@ -179,12 +183,24 @@ pub async fn restore_seed(input: String) -> Result<(), String> {
             }
         }
     }
+    if ensure_index_zero && !meta.identities.iter().any(|e| e.index == 0) {
+        let pk = identity_signing_key(&s, 0).verifying_key();
+        let _ = api::put_identity(&pk, &IdentityStateV1::default()).await;
+        IDENTITY_STATES
+            .write()
+            .insert(pk.to_bytes(), Some(IdentityStateV1::default()));
+        meta.identities.push(IdentityEntry {
+            index: 0,
+            label: "persona 0".into(),
+        });
+        meta.identities.sort_by_key(|e| e.index);
+        meta.next_index = meta.next_index.max(1);
+    }
     store_meta(&meta).await
 }
 
 /// Manually re-attach one index restore probing missed (e.g. the contract
 /// rotted off the network). Re-PUTs an empty state to revive the address.
-/// No UI affordance yet — callable surface for the restore-miss case.
 pub async fn readd_index(index: u32) -> Result<(), String> {
     let sk = signing_key(index)?;
     let pk = sk.verifying_key();
@@ -193,6 +209,9 @@ pub async fn readd_index(index: u32) -> Result<(), String> {
         return Err(format!("index {index} is already attached"));
     }
     put_identity_confirmed(&pk, "reviving the persona contract").await?;
+    IDENTITY_STATES
+        .write()
+        .insert(pk.to_bytes(), Some(IdentityStateV1::default()));
     meta.identities.push(IdentityEntry {
         index,
         label: format!("persona {index}"),

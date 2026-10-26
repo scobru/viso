@@ -62,6 +62,7 @@ pub enum View {
     Home,
     Identity(u32),
     Backup,
+    Import,
 }
 
 pub static VIEW: GlobalSignal<View> = Signal::global(View::default);

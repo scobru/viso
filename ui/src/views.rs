@@ -449,6 +449,7 @@ pub fn App() -> Element {
                 View::Home => rsx! { Home {} },
                 View::Identity(index) => rsx! { Detail { index } },
                 View::Backup => rsx! { BackupView {} },
+                View::Import => rsx! { ImportView {} },
             },
         }
     };
@@ -468,6 +469,8 @@ pub fn App() -> Element {
         footer { class: "foot",
             "your persona, everywhere · "
             button { onclick: move |_| *VIEW.write() = View::Backup, "backup" }
+            " · "
+            button { onclick: move |_| *VIEW.write() = View::Import, "import" }
             " · "
             a { href: "https://github.com/scobru/viso", target: "_blank", "source" }
         }
@@ -832,6 +835,134 @@ fn BackupCard() -> Element {
                 },
             }
             if !error.read().is_empty() { p { class: "error", "{error}" } }
+        }
+    }
+}
+
+#[component]
+fn ImportView() -> Element {
+    rsx! {
+        section { class: "wrap narrow-wrap",
+            button { class: "ghost back", onclick: move |_| *VIEW.write() = View::Home, "← all personas" }
+            ImportCard {}
+        }
+    }
+}
+
+#[component]
+fn ImportCard() -> Element {
+    let mut backup_input = use_signal(String::new);
+    let mut attach_zero = use_signal(|| true);
+    let mut busy = use_signal(|| false);
+    let mut error = use_signal(String::new);
+    let mut success = use_signal(String::new);
+
+    let mut readd_idx_input = use_signal(|| "0".to_string());
+    let mut readd_busy = use_signal(|| false);
+    let mut readd_error = use_signal(String::new);
+    let mut readd_success = use_signal(String::new);
+
+    rsx! {
+        div { class: "card",
+            div {
+                h3 { "Import identity from backup" }
+                p { class: "muted",
+                    "Paste your 24-word recovery phrase or 64-character hex seed to restore your master seed and discover your personas on Freenet."
+                }
+            }
+            if seed().is_some() {
+                p { class: "muted", style: "color: var(--accent-b);",
+                    "Note: importing a new seed will replace the current key store on this node. Make sure your current personas are backed up."
+                }
+            }
+            textarea {
+                rows: 3,
+                placeholder: "witch collapse practice feed shame open despair… or 64-character hex seed",
+                value: "{backup_input}",
+                oninput: move |e| backup_input.set(e.value()),
+            }
+            label { style: "display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text);",
+                input {
+                    r#type: "checkbox",
+                    style: "width: auto; margin: 0; cursor: pointer;",
+                    checked: *attach_zero.read(),
+                    onchange: move |e| attach_zero.set(e.value().parse().unwrap_or(true)),
+                }
+                span { "Ensure persona 0 is attached if not found on the network" }
+            }
+            div { class: "row",
+                button {
+                    class: "primary",
+                    disabled: *busy.read() || backup_input.read().trim().is_empty(),
+                    onclick: move |_| {
+                        busy.set(true);
+                        error.set(String::new());
+                        success.set(String::new());
+                        let input = backup_input.read().clone();
+                        let ensure_zero = *attach_zero.read();
+                        spawn(async move {
+                            match actions::restore_seed_opts(input, ensure_zero).await {
+                                Ok(()) => {
+                                    success.set("Identity imported successfully!".into());
+                                    crate::sleep_ms(800).await;
+                                    *VIEW.write() = View::Home;
+                                }
+                                Err(e) => error.set(e),
+                            }
+                            busy.set(false);
+                        });
+                    },
+                    if *busy.read() { "Searching the network…" } else { "Import" }
+                }
+            }
+            if *busy.read() {
+                p { class: "muted", "Probing your persona addresses — this takes about ten seconds." }
+            }
+            if !error.read().is_empty() { p { class: "error", "{error}" } }
+            if !success.read().is_empty() { p { class: "ok", "{success}" } }
+
+            hr { style: "border: none; border-top: 1px solid var(--card-border); margin: 12px 0;" }
+
+            div {
+                h4 { style: "margin: 0; font-family: var(--serif); font-size: 17px; font-weight: 600;", "Or attach persona by index" }
+                p { class: "muted",
+                    "If you already have your master seed and a persona (such as persona 0) was missed by the network probe, you can re-attach it directly."
+                }
+            }
+            div { class: "row", style: "align-items: center; gap: 10px;",
+                input {
+                    r#type: "number",
+                    style: "max-width: 120px;",
+                    min: "0",
+                    value: "{readd_idx_input}",
+                    oninput: move |e| readd_idx_input.set(e.value()),
+                }
+                button {
+                    class: "ghost",
+                    disabled: *readd_busy.read() || seed().is_none(),
+                    onclick: move |_| {
+                        readd_busy.set(true);
+                        readd_error.set(String::new());
+                        readd_success.set(String::new());
+                        let val = readd_idx_input.read().clone();
+                        spawn(async move {
+                            match val.parse::<u32>() {
+                                Ok(idx) => match actions::readd_index(idx).await {
+                                    Ok(()) => {
+                                        readd_success.set(format!("Persona {idx} attached successfully!"));
+                                    }
+                                    Err(e) => readd_error.set(e),
+                                },
+                                Err(_) => readd_error.set("Please enter a valid index number".into()),
+                            }
+                            readd_busy.set(false);
+                        });
+                    },
+                    if *readd_busy.read() { "Attaching…" } else { "Attach persona" }
+                }
+            }
+            if !readd_error.read().is_empty() { p { class: "error", "{readd_error}" } }
+            if !readd_success.read().is_empty() { p { class: "ok", "{readd_success}" } }
         }
     }
 }
