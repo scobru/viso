@@ -304,6 +304,30 @@ pub fn persona_level(index: u32) -> Option<u32> {
     viso_ante::verify_slot(&pk, &slot.bytes).ok()
 }
 
+/// Verified ghostkey badge of this persona's published `ghostkey` slot.
+pub fn persona_ghostkey(index: u32) -> Option<viso_core::ghostkey::GhostkeyBadge> {
+    let pk = identity_pubkey(index)?;
+    let states = IDENTITY_STATES.read();
+    let slot = states.get(&pk.to_bytes())?.as_ref()?.slots.get(viso_core::resources::SLOT_GHOSTKEY)?;
+    viso_core::ghostkey::verify_badge(&slot.bytes, &pk.to_bytes()).ok()
+}
+
+/// Publish a ghostkey proof (base64 of the delegate's signed bundle) after
+/// verifying it locally; an invalid bundle never reaches the network.
+pub async fn attach_ghostkey(index: u32, bundle_b64: String) -> Result<(), String> {
+    use base64::Engine;
+    let pk = identity_pubkey(index).ok_or("no identity")?;
+    let bundle = base64::engine::general_purpose::STANDARD
+        .decode(bundle_b64.trim())
+        .map_err(|e| format!("not base64: {e}"))?;
+    viso_core::ghostkey::verify_badge(&bundle, &pk.to_bytes())?;
+    publish_slot(index, viso_core::resources::SLOT_GHOSTKEY, bundle).await
+}
+
+pub async fn remove_ghostkey(index: u32) -> Result<(), String> {
+    publish_slot(index, viso_core::resources::SLOT_GHOSTKEY, vec![]).await
+}
+
 /// Hashes per chunk before yielding to the browser event loop.
 const GRIND_CHUNK: u64 = 20_000;
 

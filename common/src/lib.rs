@@ -5,6 +5,8 @@
 pub mod connect;
 pub mod delegate_api;
 pub mod derive;
+#[cfg(feature = "ghostkey")]
+pub mod ghostkey;
 pub mod merge;
 pub mod resources;
 pub mod state;

@@ -15,6 +15,11 @@ blake3.workspace = true
 bs58.workspace = true
 data-encoding.workspace = true
 freenet-stdlib.workspace = true
+# Optional: pulls RSA. Contract/delegate WASM builds leave it off.
+ghostkey_lib = { version = "0.2", optional = true }
+
+[features]
+ghostkey = ["dep:ghostkey_lib"]
 
 [dev-dependencies]
 rand.workspace = true
