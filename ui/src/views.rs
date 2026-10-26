@@ -112,8 +112,11 @@ pub fn connect_request_from_location() -> Option<ConnectRequest> {
             return None;
         }
 
+        let request_key = get_val("key").as_deref() == Some("v1");
+
         let challenge = match get_val("challenge") {
             Some(c) => c,
+            None if request_key => "auto".to_string(),
             None => {
                 api::log("[viso] connect request ignored: missing challenge");
                 return None;
@@ -146,13 +149,14 @@ pub fn connect_request_from_location() -> Option<ConnectRequest> {
         let return_base = format!("{}{}", url.origin(), url.pathname());
         let return_base = viso_core::connect::signing_base(&return_base, get_val("base").as_deref());
 
-        api::log(&format!("[viso] connect request validated: origin='{}', return_base='{}{}', return_url='{return_url}', challenge='{challenge}'", url.origin(), url.origin(), url.pathname()));
+        api::log(&format!("[viso] connect request validated: origin='{}', return_base='{}{}', return_url='{return_url}', challenge='{challenge}', request_key={request_key}", url.origin(), url.origin(), url.pathname()));
 
         Some(ConnectRequest {
             origin: url.origin(),
             return_base,
             return_url,
             challenge,
+            request_key,
         })
     };
 
@@ -674,7 +678,11 @@ fn ConnectView() -> Element {
                     " wants to know who you are."
                 }
                 p { class: "muted",
-                    "Sharing sends a signed proof that you own the persona. The site learns its public key (and can read its public profile) — nothing else."
+                    if req.request_key {
+                        "Sharing connects your persona and derives a sovereign encryption key for this app from your Viso seed. Your workspace will sync across all your devices using this persona."
+                    } else {
+                        "Sharing sends a signed proof that you own the persona. The site learns its public key (and can read its public profile) — nothing else."
+                    }
                 }
             }
             if entries.is_empty() {

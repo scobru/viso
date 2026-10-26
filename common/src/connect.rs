@@ -51,6 +51,20 @@ pub fn sign_connect(sk: &SigningKey, return_base: &str, challenge: &str, time_ms
     sk.sign(&connect_message(&sk.verifying_key(), return_base, challenge, time_ms))
 }
 
+/// What an app secret ([`crate::derive::app_secret`]) is bound to: `contract/web/<id>` for an app served by a
+/// Freenet node (any host, /v1 or /v2, any page of it), else the callback's path. Taken from the callback URL
+/// itself, which is where the secret is delivered: an app cannot ask for another app's secret.
+pub fn app_scope(return_base: &str) -> Option<String> {
+    let path = path_of(return_base)?;
+    for p in ["/v1/contract/web/", "/v2/contract/web/"] {
+        if let Some(rest) = path.strip_prefix(p) {
+            let id = rest.split('/').next().filter(|id| !id.is_empty())?;
+            return Some(format!("contract/web/{id}"));
+        }
+    }
+    Some(path.to_string())
+}
+
 pub fn check_connect(
     pk: &VerifyingKey,
     return_base: &str,
@@ -111,6 +125,18 @@ mod tests {
         assert_eq!(signing_base(ret, Some("http://127.0.0.1:7509/v1/contract/web/Other/")), ret);
         assert_eq!(signing_base(ret, Some("http://127.0.0.1:7509/v1/contract/web/App1/?x=1")), ret);
         assert_eq!(signing_base(ret, Some("javascript:/v1/contract/web/App1/")), ret);
+    }
+
+    #[test]
+    fn app_scope_is_the_contract_id() {
+        let s = Some("contract/web/App1".to_string());
+        assert_eq!(app_scope("http://127.0.0.1:7509/v1/contract/web/App1/"), s);
+        assert_eq!(app_scope("http://192.168.1.7:7509/v2/contract/web/App1/index.html"), s);
+        assert_eq!(app_scope("http://127.0.0.1:7509/v1/contract/web/App1"), s);
+        assert_ne!(app_scope("http://127.0.0.1:7509/v1/contract/web/App2/"), s);
+        assert_eq!(app_scope("http://127.0.0.1:7509/v1/contract/web//"), None);
+        assert_eq!(app_scope("https://example.com/app"), Some("/app".to_string()));
+        assert_eq!(app_scope("javascript:/v1/contract/web/App1/"), None);
     }
 
     /// Wire-frozen: a format change here invalidates proofs against every

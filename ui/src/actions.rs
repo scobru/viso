@@ -472,20 +472,47 @@ fn callback_url(return_url: &str, params: &str) -> String {
 
 /// The signed approval callback URL: proof that this persona's key consented
 /// to identify to `req.origin` for this challenge, at this time.
+/// If `req.request_key` is true, Viso derives an app secret deterministically from the persona and app scope,
+/// delegates `wd1.<app_pubkey>.<nonce>` in the signed proof, and returns `#sk=<app_secret_hex>`.
 pub fn connect_ok_url(index: u32, req: &ConnectRequest, time_ms: u64) -> Result<String, String> {
     let sk = signing_key(index)?;
     let pk = sk.verifying_key();
-    let sig = viso_core::connect::sign_connect(&sk, &req.return_base, &req.challenge, time_ms);
     let hex = |b: &[u8]| data_encoding::HEXLOWER.encode(b);
-    Ok(callback_url(
+
+    let (challenge_to_sign, fragment) = if req.request_key {
+        let scope = viso_core::connect::app_scope(&req.return_base)
+            .unwrap_or_else(|| "/".to_string());
+        let sec = viso_core::derive::app_secret(&sk, &scope);
+        let app_sk = ed25519_dalek::SigningKey::from_bytes(&sec);
+        let app_pk = app_sk.verifying_key();
+        let nonce = req.challenge_nonce();
+        let ch = format!("wd1.{}.{}", hex(app_pk.as_bytes()), nonce);
+        let frag = format!("sk={}", hex(&sec));
+        (ch, Some(frag))
+    } else {
+        (req.challenge.clone(), None)
+    };
+
+    let sig = viso_core::connect::sign_connect(&sk, &req.return_base, &challenge_to_sign, time_ms);
+    let mut url = callback_url(
         &req.return_url,
         &format!(
             "viso=ok&pk={}&sig={}&challenge={}&ts={time_ms}",
             hex(pk.as_bytes()),
             hex(&sig.to_bytes()),
-            req.challenge
+            challenge_to_sign
         ),
-    ))
+    );
+    if let Some(frag) = fragment {
+        if url.contains('#') {
+            url.push('&');
+            url.push_str(&frag);
+        } else {
+            url.push('#');
+            url.push_str(&frag);
+        }
+    }
+    Ok(url)
 }
 
 pub fn connect_denied_url(req: &ConnectRequest) -> String {
@@ -534,6 +561,28 @@ mod tests {
         assert_eq!(callback_url("https://x.com/cb?a=1", "viso=denied"), "https://x.com/cb?a=1&viso=denied");
         assert_eq!(callback_url("https://x.com/cb#/mine", "viso=denied"), "https://x.com/cb?viso=denied#/mine");
         assert_eq!(callback_url("https://x.com/cb?a=1#/mine", "viso=denied"), "https://x.com/cb?a=1&viso=denied#/mine");
+    }
+
+    #[test]
+    fn connect_ok_url_derives_key_when_requested() {
+        use dioxus::prelude::*;
+        fn test_app() -> Element {
+            *crate::state::SEED_LOADED.write() = Some(Some(SEED));
+            let req = crate::state::ConnectRequest {
+                origin: "http://127.0.0.1:7509".into(),
+                return_base: "http://127.0.0.1:7509/v1/contract/web/OrtoApp/".into(),
+                return_url: "http://127.0.0.1:7509/v1/contract/web/OrtoApp/".into(),
+                challenge: "1234567890abcdef".into(),
+                request_key: true,
+            };
+            let url = super::connect_ok_url(0, &req, 1000).unwrap();
+            assert!(url.contains("viso=ok"));
+            assert!(url.contains("#sk="));
+            assert!(url.contains("challenge=wd1."));
+            VNode::empty()
+        }
+        let mut dom = VirtualDom::new(test_app);
+        dom.rebuild_to_vec();
     }
 
     /// The whole point of a backup: both encodings in the file must parse

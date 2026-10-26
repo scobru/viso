@@ -51,6 +51,23 @@ pub struct ConnectRequest {
     pub return_base: String,
     pub return_url: String,
     pub challenge: String,
+    /// True if the app requested a deterministic derived app secret (`key=v1`).
+    pub request_key: bool,
+}
+
+impl ConnectRequest {
+    pub fn challenge_nonce(&self) -> String {
+        if self.challenge.is_empty() {
+            return "auto".to_string();
+        }
+        if let Some((_, rest)) = self.challenge.split_once('.') {
+            if let Some((_, nonce)) = rest.split_once('.') {
+                return nonce.to_string();
+            }
+            return rest.to_string();
+        }
+        self.challenge.clone()
+    }
 }
 
 pub static CONNECT: GlobalSignal<Option<ConnectRequest>> =
