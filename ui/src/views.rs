@@ -1018,6 +1018,9 @@ fn Detail(index: u32) -> Element {
     let mut confirm = use_signal(String::new);
     let mut destroy_busy = use_signal(|| false);
     let mut destroy_err = use_signal(String::new);
+    let mut renaming = use_signal(|| false);
+    let mut new_label = use_signal(String::new);
+    let mut rename_err = use_signal(String::new);
 
     // After every hook (Dioxus hook order must not vary between renders):
     // wait for the contract state before showing editable surfaces.
@@ -1051,8 +1054,45 @@ fn Detail(index: u32) -> Element {
                         None => rsx! { span { class: "avatar lg", style: identicon_style(&pkb) } },
                     }
                     div { class: "id-title",
-                        h2 { "{entry_label}" }
+                        if *renaming.read() {
+                            div { class: "row",
+                                input {
+                                    value: "{new_label}",
+                                    placeholder: "persona name (only on this device)",
+                                    oninput: move |e| new_label.set(e.value()),
+                                }
+                                button { class: "primary",
+                                    disabled: new_label.read().trim().is_empty(),
+                                    onclick: move |_| {
+                                        rename_err.set(String::new());
+                                        spawn(async move {
+                                            match actions::rename_identity(index, new_label.read().clone()).await {
+                                                Ok(()) => renaming.set(false),
+                                                Err(e) => rename_err.set(e),
+                                            }
+                                        });
+                                    },
+                                    "save"
+                                }
+                                button { class: "ghost", onclick: move |_| renaming.set(false), "cancel" }
+                            }
+                        } else {
+                            div { class: "row",
+                                h2 { "{entry_label}" }
+                                button { class: "ghost",
+                                    onclick: {
+                                        let current = entry_label.clone();
+                                        move |_| {
+                                            new_label.set(current.clone());
+                                            renaming.set(true);
+                                        }
+                                    },
+                                    "rename"
+                                }
+                            }
+                        }
                         code { class: "muted small", "{short_key(&pkb)}" }
+                        if !rename_err.read().is_empty() { p { class: "error", "{rename_err}" } }
                     }
                 }
                 p { class: "muted", "Profile picture — auto-cropped square, published as PNG:" }
@@ -1219,6 +1259,7 @@ fn PersonaLevel(index: u32) -> Element {
     let mut busy = use_signal(|| false);
     let mut tried = use_signal(|| 0u64);
     let mut cancel = use_signal(|| false);
+    let mut publishing = use_signal(|| false);
     let mut msg = use_signal(String::new);
     let mut err = use_signal(String::new);
 
@@ -1251,9 +1292,11 @@ fn PersonaLevel(index: u32) -> Element {
                     }
                 }
             }
-            p { class: "muted small", "≈ {expected} hashes on average; each +1 bit doubles the cost." }
+            p { class: "muted small", "≈ {expected} hashes on average; each +1 bit doubles the cost. Keep this tab in front: browsers slow down background tabs." }
             div { class: "row",
-                if *busy.read() {
+                if *publishing.read() {
+                    span { "found ✓ — publishing…" }
+                } else if *busy.read() {
                     span { "grinding… {pct}%" }
                     button { class: "ghost", onclick: move |_| cancel.set(true), "cancel" }
                 } else {
@@ -1271,7 +1314,9 @@ fn PersonaLevel(index: u32) -> Element {
                                     t,
                                     move |n| tried.set(n),
                                     move || *cancel.peek(),
+                                    move || publishing.set(true),
                                 ).await;
+                                publishing.set(false);
                                 match r {
                                     Ok(b) => msg.set(format!("published {b} bits ✓")),
                                     Err(e) => err.set(e),

@@ -376,12 +376,17 @@ pub async fn remove_ghostkey(index: u32) -> Result<(), String> {
     publish_slot(index, viso_core::resources::SLOT_GHOSTKEY, vec![]).await
 }
 
-/// Hashes per chunk before yielding to the browser event loop.
+/// Hashes per `grind_step` call; calls repeat until GRIND_SLICE_MS passes.
 const GRIND_CHUNK: u64 = 20_000;
+/// Grind this long before yielding to the browser event loop. A time slice
+/// instead of a fixed count: browsers throttle timers in background tabs
+/// (to 1/s, later 1/min), so a small fixed chunk per tick nearly stops there.
+const GRIND_SLICE_MS: u64 = 200;
 
 /// Grind a nonce reaching `target_bits` for this persona, in chunks that
 /// yield so the UI stays live, then publish it as the `ante` slot.
-/// `progress` gets hashes tried so far; `cancelled` is polled per chunk.
+/// `progress` gets hashes tried so far; `cancelled` is polled per slice;
+/// `found` fires once the nonce is found, before the (slower) publish.
 /// Refuses to publish a level not above the current one (LWW would
 /// otherwise let a cheaper proof replace a dearer one).
 pub async fn raise_level(
@@ -389,6 +394,7 @@ pub async fn raise_level(
     target_bits: u32,
     mut progress: impl FnMut(u64),
     cancelled: impl Fn() -> bool,
+    found: impl FnOnce(),
 ) -> Result<u32, String> {
     let current = persona_level(index).unwrap_or(0);
     if target_bits <= current {
@@ -397,17 +403,21 @@ pub async fn raise_level(
     let sk = signing_key(index)?;
     let pk = sk.verifying_key();
     let mut start = 0u64;
-    let nonce = loop {
+    let nonce = 'grind: loop {
         if cancelled() {
             return Err("cancelled".into());
         }
-        if let Some(n) = viso_ante::grind_step(&pk, start, GRIND_CHUNK, target_bits) {
-            break n;
+        let slice_end = keys::now_ms() + GRIND_SLICE_MS;
+        while keys::now_ms() < slice_end {
+            if let Some(n) = viso_ante::grind_step(&pk, start, GRIND_CHUNK, target_bits) {
+                break 'grind n;
+            }
+            start += GRIND_CHUNK;
         }
-        start += GRIND_CHUNK;
         progress(start);
         crate::sleep_ms(0).await;
     };
+    found();
     let bits = viso_ante::bits(&pk, nonce);
     publish_slot(index, viso_ante::SLOT_ANTE, viso_ante::make_slot(&sk, nonce, keys::now_ms())).await?;
     Ok(bits)
