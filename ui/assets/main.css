@@ -294,3 +294,10 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   main { padding: 12px 14px 40px; }
   .backup { flex-direction: column; align-items: stretch; }
 }
+
+/* ---- developer section ---- */
+.dev { margin-top: 32px; text-align: left; gap: 10px; }
+.dev h4 { margin: 8px 0 0; font-family: var(--serif); }
+.dev ul, .dev ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.dev pre { margin: 6px 0 0; padding: 8px 10px; background: var(--bg-soft); border: 1px solid var(--card-border); border-radius: var(--radius); overflow-x: auto; font-size: 13px; }
+.dev a { color: var(--accent-a); }
