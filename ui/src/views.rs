@@ -470,47 +470,15 @@ pub fn App() -> Element {
             StatusDot {}
         }
         main { {body} }
-        ForDevelopers {}
         footer { class: "foot",
             "your persona, everywhere · "
             button { onclick: move |_| *VIEW.write() = View::Backup, "backup" }
             " · "
             button { onclick: move |_| *VIEW.write() = View::Import, "import" }
             " · "
+            a { href: "https://github.com/scobru/viso/blob/main/docs/dapp-integration.md", target: "_blank", "docs" }
+            " · "
             a { href: "https://github.com/scobru/viso", target: "_blank", "source" }
-        }
-    }
-}
-
-/// Collapsed pitch + quick-start for dApp developers, shown under every view.
-#[component]
-fn ForDevelopers() -> Element {
-    const DOCS: &str = "https://github.com/scobru/viso/blob/main/docs/dapp-integration.md";
-    rsx! {
-        details { class: "card dev",
-            summary { h3 { "For developers: add Viso to your app" } }
-            h4 { "Why adopt it" }
-            ul {
-                li { b { "No accounts to build. " } "Users sign in with a persona they already have — no passwords, emails, or user database." }
-                li { b { "Profiles for free. " } "Name, bio, and avatar live in the user's own contract; read them by public key, they stay current everywhere." }
-                li { b { "Trustless. " } "Every slot is signed by the persona's key and verified client-side — the serving node can't forge anything." }
-                li { b { "Built-in anti-spam. " } "The " code { "ante" } " slot is a proof of commitment: set your own minimum level to keep zero-cost sybils out." }
-                li { b { "Private by design. " } "Personas are unlinkable; users pick which face to show each app." }
-            }
-            h4 { "How to integrate" }
-            ol {
-                li { "Redirect to this site with a single-use challenge:"
-                    pre { code { "?connect=v1&challenge=<nonce>&return=<your-url>" } }
-                }
-                li { "On return (" code { "?viso=ok&pk=…&sig=…&ts=…" } "), check the challenge, the timestamp, and the Ed25519 signature over the " code { "whoiam-connect-v1" } " message." }
-                li { "Fetch the proven key's public contract:"
-                    pre { code { "let id = viso_client::fetch(ws_url, &pk).await?;\n// id.profile, id.avatar, id.ante_bits" } }
-                }
-            }
-            p { class: "muted",
-                "Full guide with TypeScript and Rust examples: "
-                a { href: DOCS, target: "_blank", "docs/dapp-integration.md" }
-            }
         }
     }
 }
