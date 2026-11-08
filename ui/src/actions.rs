@@ -20,6 +20,11 @@ pub fn identity_pubkey(index: u32) -> Option<VerifyingKey> {
     seed().map(|s| identity_signing_key(&s, index).verifying_key())
 }
 
+/// Raw 32-byte secret key scalar of the persona's Ed25519 keypair.
+pub fn persona_secret_bytes(index: u32) -> Result<[u8; 32], String> {
+    signing_key(index).map(|sk| sk.to_bytes())
+}
+
 fn signing_key(index: u32) -> Result<SigningKey, String> {
     seed()
         .map(|s| identity_signing_key(&s, index))
@@ -589,6 +594,20 @@ mod tests {
             assert!(url.contains("viso=ok"));
             assert!(url.contains("#sk="));
             assert!(url.contains("challenge=wd1."));
+            VNode::empty()
+        }
+        let mut dom = VirtualDom::new(test_app);
+        dom.rebuild_to_vec();
+    }
+
+    #[test]
+    fn persona_secret_bytes_derives_correct_key() {
+        use dioxus::prelude::*;
+        fn test_app() -> Element {
+            *crate::state::SEED_LOADED.write() = Some(Some(SEED));
+            let sk_bytes = super::persona_secret_bytes(0).unwrap();
+            let sk = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
+            assert_eq!(sk.verifying_key(), super::identity_pubkey(0).unwrap());
             VNode::empty()
         }
         let mut dom = VirtualDom::new(test_app);

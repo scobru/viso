@@ -1023,6 +1023,8 @@ fn Detail(index: u32) -> Element {
     let mut renaming = use_signal(|| false);
     let mut new_label = use_signal(String::new);
     let mut rename_err = use_signal(String::new);
+    let mut sk_revealed = use_signal(|| None::<(String, String)>);
+    let mut sk_err = use_signal(String::new);
 
     // After every hook (Dioxus hook order must not vary between renders):
     // wait for the contract state before showing editable surfaces.
@@ -1220,6 +1222,52 @@ fn Detail(index: u32) -> Element {
                     code { "{contract_id}" }
                     CopyButton { text: contract_id.clone(), label: "copy".to_string() }
                 }
+            }
+
+            details { class: "card",
+                summary { h3 { "Export private key" } }
+                p { class: "muted",
+                    "The raw Ed25519 secret key for this persona. Use this if you need to import this persona manually into an external app or tool without using Viso."
+                }
+                p { class: "muted small",
+                    "Anyone holding this key can sign on behalf of this persona. Keep it safe and never share it publicly."
+                }
+                match sk_revealed.read().clone() {
+                    None => rsx! {
+                        div { class: "row",
+                            button { class: "ghost",
+                                onclick: move |_| {
+                                    sk_err.set(String::new());
+                                    match actions::persona_secret_bytes(index) {
+                                        Ok(bytes) => {
+                                            let hex_key = data_encoding::HEXLOWER.encode(&bytes);
+                                            let bs58_key = bs58::encode(&bytes).into_string();
+                                            sk_revealed.set(Some((hex_key, bs58_key)));
+                                        }
+                                        Err(e) => sk_err.set(e),
+                                    }
+                                },
+                                "Reveal private key"
+                            }
+                        }
+                    },
+                    Some((hex_key, bs58_key)) => rsx! {
+                        label { "Private key (hex - 64 characters)" }
+                        div { class: "keyrow",
+                            code { "{hex_key}" }
+                            CopyButton { text: hex_key.clone(), label: "copy hex".to_string() }
+                        }
+                        label { "Private key (base58)" }
+                        div { class: "keyrow",
+                            code { "{bs58_key}" }
+                            CopyButton { text: bs58_key.clone(), label: "copy base58".to_string() }
+                        }
+                        div { class: "row",
+                            button { class: "ghost", onclick: move |_| sk_revealed.set(None), "hide" }
+                        }
+                    },
+                }
+                if !sk_err.read().is_empty() { p { class: "error", "{sk_err}" } }
             }
 
             details { class: "card danger",
