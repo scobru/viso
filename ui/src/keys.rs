@@ -1,5 +1,7 @@
 //! Vendored wasm bytes and contract-address derivation.
 
+use std::sync::{Arc, OnceLock};
+
 use ed25519_dalek::VerifyingKey;
 use freenet_stdlib::prelude::{ContractCode, ContractInstanceId, ContractKey, Parameters};
 use viso_core::state::IdentityParamsV1;
@@ -14,12 +16,17 @@ pub fn identity_params(pk: &VerifyingKey) -> IdentityParamsV1 {
     }
 }
 
+/// The identity contract code, hashed once: every address derivation would
+/// otherwise copy and re-hash the whole wasm (ack polling does it 10x/s).
+pub fn identity_code() -> Arc<ContractCode<'static>> {
+    static CODE: OnceLock<Arc<ContractCode<'static>>> = OnceLock::new();
+    CODE.get_or_init(|| Arc::new(ContractCode::from(IDENTITY_CONTRACT_WASM)))
+        .clone()
+}
+
 pub fn identity_key(pk: &VerifyingKey) -> ContractKey {
     let params = viso_core::to_cbor(&identity_params(pk)).expect("params serialize");
-    ContractKey::from_params_and_code(
-        Parameters::from(params),
-        &ContractCode::from(IDENTITY_CONTRACT_WASM.to_vec()),
-    )
+    ContractKey::from_params_and_code(Parameters::from(params), &*identity_code())
 }
 
 pub fn identity_instance_id(pk: &VerifyingKey) -> ContractInstanceId {

@@ -29,10 +29,7 @@ const IDENTITY_CONTRACT_WASM: &[u8] = include_bytes!("../../ui/contracts/identit
 fn identity_key(pk: &VerifyingKey) -> ContractKey {
     let params = viso_core::to_cbor(&IdentityParamsV1 { version: 1, pubkey: *pk })
         .expect("params serialize");
-    ContractKey::from_params_and_code(
-        Parameters::from(params),
-        &ContractCode::from(IDENTITY_CONTRACT_WASM.to_vec()),
-    )
+    ContractKey::from_params_and_code(Parameters::from(params), &ContractCode::from(IDENTITY_CONTRACT_WASM))
 }
 
 /// What this page is doing, decided once at boot from the URL params.

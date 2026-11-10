@@ -127,7 +127,7 @@ pub async fn send(request: ClientRequest<'static>) -> Result<(), String> {
 fn identity_container(pk: &VerifyingKey) -> ContractContainer {
     let params = viso_core::to_cbor(&keys::identity_params(pk)).expect("params");
     ContractContainer::Wasm(ContractWasmAPIVersion::V1(WrappedContract::new(
-        std::sync::Arc::new(ContractCode::from(keys::IDENTITY_CONTRACT_WASM.to_vec())),
+        keys::identity_code(),
         Parameters::from(params),
     )))
 }
@@ -180,10 +180,15 @@ fn whoiam_delegate_container() -> DelegateContainer {
     DelegateContainer::Wasm(DelegateWasmAPIVersion::V1(delegate))
 }
 
+/// Hashed once: dispatch compares against it on every delegate response.
 pub fn whoiam_delegate_key() -> DelegateKey {
-    let code = DelegateCode::from(keys::WHOIAM_DELEGATE_WASM.to_vec());
-    let params = Parameters::from(Vec::<u8>::new());
-    DelegateKey::from_params(code.hash_str(), &params).expect("delegate key")
+    static KEY: std::sync::OnceLock<DelegateKey> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| {
+        let code = DelegateCode::from(keys::WHOIAM_DELEGATE_WASM);
+        let params = Parameters::from(Vec::<u8>::new());
+        DelegateKey::from_params(code.hash_str(), &params).expect("delegate key")
+    })
+    .clone()
 }
 
 /// Stable-but-local cipher material, same rationale as River (river#397):
@@ -400,18 +405,31 @@ fn apply_contract_bytes(key: &ContractKey, bytes: &[u8]) {
     }
     let Ok(vk) = VerifyingKey::from_bytes(&owner) else { return };
     match viso_core::from_cbor::<IdentityStateV1>(bytes) {
+        // The incoming bytes are untrusted: merge_state re-verifies
+        // every signature before anything lands in the UI.
         Ok(incoming) => {
-            let mut states = IDENTITY_STATES.write();
-            let entry = states.entry(owner).or_insert(None);
-            let current = entry.get_or_insert_with(IdentityStateV1::default);
-            // The incoming bytes are untrusted: merge_state re-verifies
-            // every signature before anything lands in the UI.
-            if let Err(e) = merge_state(current, &incoming, &vk, keys::now_ms()) {
+            if let Err(e) = merge_identity(&vk, &incoming) {
                 log(&format!("rejected identity state for {key}: {e}"));
             }
         }
         Err(e) => log(&format!("bad identity state: {e}")),
     }
+}
+
+/// LWW-merge `incoming` into the held state for `pk`. Writes the signal only
+/// when something changed (or the state first arrives): every write re-renders
+/// every view, and subscription echoes of our own writes are merge no-ops.
+pub fn merge_identity(pk: &VerifyingKey, incoming: &IdentityStateV1) -> Result<(), String> {
+    let owner = pk.to_bytes();
+    let held = IDENTITY_STATES.peek().get(&owner).cloned().flatten();
+    let arrived = held.is_some();
+    let mut current = held.unwrap_or_default();
+    let merged = merge_state(&mut current, incoming, pk, keys::now_ms());
+    // A rejected update still marks the state arrived, as before.
+    if !arrived || matches!(merged, Ok(true)) {
+        IDENTITY_STATES.write().insert(owner, Some(current));
+    }
+    merged.map(|_| ())
 }
 
 fn dispatch_kv(payload: &[u8]) {
@@ -482,4 +500,45 @@ pub fn log(msg: &str) {
     web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(msg));
     #[cfg(not(target_arch = "wasm32"))]
     println!("{msg}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+    use viso_core::state::sign_slot;
+
+    #[test]
+    fn merge_identity_lands_newer_and_keeps_on_reject() {
+        fn test_app() -> Element {
+            let sk = SigningKey::from_bytes(&[9u8; 32]);
+            let pk = sk.verifying_key();
+            let held = || IDENTITY_STATES.peek().get(&pk.to_bytes()).cloned().flatten();
+            let with = |time, bytes: &[u8]| {
+                let mut s = IdentityStateV1::default();
+                s.slots.insert("profile".into(), sign_slot(&sk, "profile", time, bytes.to_vec()));
+                s
+            };
+            merge_identity(&pk, &with(100, b"old")).unwrap();
+            merge_identity(&pk, &with(200, b"new")).unwrap();
+            merge_identity(&pk, &with(100, b"old")).unwrap(); // stale echo: no-op
+            assert_eq!(held().unwrap().slots["profile"].bytes, b"new");
+
+            let mut forged = with(300, b"x");
+            forged.slots.get_mut("profile").unwrap().bytes = b"forged".to_vec();
+            assert!(merge_identity(&pk, &forged).is_err());
+            assert_eq!(held().unwrap().slots["profile"].bytes, b"new");
+
+            // A rejected first answer still marks the state arrived (empty).
+            let other = SigningKey::from_bytes(&[8u8; 32]).verifying_key();
+            assert!(merge_identity(&other, &forged).is_err());
+            assert_eq!(
+                IDENTITY_STATES.peek().get(&other.to_bytes()).cloned().flatten(),
+                Some(IdentityStateV1::default())
+            );
+            VNode::empty()
+        }
+        let mut dom = VirtualDom::new(test_app);
+        dom.rebuild_to_vec();
+    }
 }

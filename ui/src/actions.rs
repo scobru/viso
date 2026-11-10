@@ -8,7 +8,6 @@ use viso_core::delegate_api::{
     IdentityEntry, IdentityMeta, WhoiamDelegateRequest, KEY_META, KEY_SEED,
 };
 use viso_core::derive::identity_signing_key;
-use viso_core::merge::merge_state;
 use viso_core::resources::{check_avatar_bytes, check_profile, ProfileV1, SLOT_AVATAR, SLOT_PROFILE};
 use viso_core::state::{sign_destroy, sign_slot, IdentityStateV1};
 
@@ -16,8 +15,24 @@ use crate::api;
 use crate::keys;
 use crate::state::*;
 
+/// Cached per (seed, index): views ask on every render, and each derivation
+/// is an Ed25519 scalar multiplication.
 pub fn identity_pubkey(index: u32) -> Option<VerifyingKey> {
-    seed().map(|s| identity_signing_key(&s, index).verifying_key())
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    thread_local! {
+        static CACHE: RefCell<([u8; 32], BTreeMap<u32, VerifyingKey>)> = RefCell::default();
+    }
+    let s = seed()?;
+    Some(CACHE.with_borrow_mut(|(cached_seed, keys)| {
+        if *cached_seed != s {
+            *cached_seed = s;
+            keys.clear();
+        }
+        *keys
+            .entry(index)
+            .or_insert_with(|| identity_signing_key(&s, index).verifying_key())
+    }))
 }
 
 /// Raw 32-byte secret key scalar of the persona's Ed25519 keypair.
@@ -41,13 +56,17 @@ const CONTRACT_ACK_TIMEOUT_MS: u32 = 30_000;
 /// "done" is a caller-chosen observation (an ack counter passing its
 /// pre-send baseline, or state reflecting the write).
 async fn wait_until(mut done: impl FnMut() -> bool, timeout_ms: u32, what: &str) -> Result<(), String> {
-    let mut waited = 0u32;
-    while waited < timeout_ms {
+    // Wall clock, not a tick count: background tabs throttle timers to 1/s
+    // or worse, which stretched a 30s timeout to minutes.
+    let deadline = keys::now_ms() + timeout_ms as u64;
+    loop {
         if done() {
             return Ok(());
         }
+        if keys::now_ms() >= deadline {
+            break;
+        }
         crate::sleep_ms(100).await;
-        waited += 100;
     }
     Err(format!("{what} was not confirmed — nothing was changed remotely. Reload and try again."))
 }
@@ -294,11 +313,7 @@ async fn publish_slot(index: u32, name: &str, bytes: Vec<u8>) -> Result<(), Stri
     )
     .await?;
     // Confirmed: mirror locally (idempotent if the echo already merged it).
-    let mut states = IDENTITY_STATES.write();
-    let entry = states.entry(pkb).or_insert(None);
-    let current = entry.get_or_insert_with(IdentityStateV1::default);
-    merge_state(current, &delta, &pk, keys::now_ms())?;
-    Ok(())
+    api::merge_identity(&pk, &delta)
 }
 
 pub async fn save_profile(index: u32, name: String, bio: String) -> Result<(), String> {
@@ -608,6 +623,28 @@ mod tests {
             let sk_bytes = super::persona_secret_bytes(0).unwrap();
             let sk = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
             assert_eq!(sk.verifying_key(), super::identity_pubkey(0).unwrap());
+            VNode::empty()
+        }
+        let mut dom = VirtualDom::new(test_app);
+        dom.rebuild_to_vec();
+    }
+
+    /// The pubkey cache must follow the seed: a stale key after an import
+    /// would sign-in and publish as the previous seed's persona.
+    #[test]
+    fn identity_pubkey_cache_follows_seed() {
+        use dioxus::prelude::*;
+        use viso_core::derive::identity_signing_key;
+        fn test_app() -> Element {
+            for s in [SEED, [0x11; 32], SEED] {
+                *crate::state::SEED_LOADED.write() = Some(Some(s));
+                for i in [0, 1, 0] {
+                    assert_eq!(
+                        super::identity_pubkey(i).unwrap(),
+                        identity_signing_key(&s, i).verifying_key()
+                    );
+                }
+            }
             VNode::empty()
         }
         let mut dom = VirtualDom::new(test_app);
