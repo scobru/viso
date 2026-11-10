@@ -75,11 +75,12 @@ pub fn identity_params(pk: &VerifyingKey) -> IdentityParamsV1 {
 
 /// The identity's contract key, derived offline.
 pub fn contract_key(pk: &VerifyingKey) -> ContractKey {
+    // Hashed once: callers resolving many keys would otherwise copy and
+    // re-hash the whole wasm per key.
+    static CODE: std::sync::OnceLock<ContractCode<'static>> = std::sync::OnceLock::new();
+    let code = CODE.get_or_init(|| ContractCode::from(IDENTITY_CONTRACT_WASM));
     let params = viso_core::to_cbor(&identity_params(pk)).expect("params serialize");
-    ContractKey::from_params_and_code(
-        Parameters::from(params),
-        &ContractCode::from(IDENTITY_CONTRACT_WASM.to_vec()),
-    )
+    ContractKey::from_params_and_code(Parameters::from(params), code)
 }
 
 /// bs58 (preferred) or lowercase hex.

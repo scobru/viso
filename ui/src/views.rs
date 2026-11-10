@@ -34,30 +34,36 @@ fn sniff_mime(bytes: &[u8]) -> &'static str {
     }
 }
 
-/// This identity's published state, if it has arrived.
-fn published(index: u32) -> Option<viso_core::state::IdentityStateV1> {
+/// Read this identity's published state in place, if it has arrived. Borrowed,
+/// not cloned: the state carries the avatar and views ask on every render.
+fn with_published<T>(
+    index: u32,
+    f: impl FnOnce(&viso_core::state::IdentityStateV1) -> Option<T>,
+) -> Option<T> {
     let pk = actions::identity_pubkey(index)?;
-    IDENTITY_STATES.read().get(&pk.to_bytes())?.clone()
+    f(IDENTITY_STATES.read().get(&pk.to_bytes())?.as_ref()?)
 }
 
 fn published_profile(index: u32) -> Option<ProfileV1> {
-    let state = published(index)?;
-    let slot = state.slots.get(SLOT_PROFILE)?;
-    if slot.bytes.is_empty() {
-        return None;
-    }
-    viso_core::from_cbor(&slot.bytes).ok()
+    with_published(index, |state| {
+        let slot = state.slots.get(SLOT_PROFILE)?;
+        if slot.bytes.is_empty() {
+            return None;
+        }
+        viso_core::from_cbor(&slot.bytes).ok()
+    })
 }
 
 fn published_avatar(index: u32) -> Option<Vec<u8>> {
-    let state = published(index)?;
-    let slot = state.slots.get(SLOT_AVATAR)?;
-    if slot.bytes.is_empty() {
-        return None;
-    }
-    // Signed ≠ well-formed: schema-check before the bytes reach an <img>.
-    viso_core::resources::check_avatar_bytes(&slot.bytes).ok()?;
-    Some(slot.bytes.clone())
+    with_published(index, |state| {
+        let slot = state.slots.get(SLOT_AVATAR)?;
+        if slot.bytes.is_empty() {
+            return None;
+        }
+        // Signed ≠ well-formed: schema-check before the bytes reach an <img>.
+        viso_core::resources::check_avatar_bytes(&slot.bytes).ok()?;
+        Some(slot.bytes.clone())
+    })
 }
 
 fn avatar_data_url(bytes: &[u8]) -> String {
@@ -389,9 +395,6 @@ pub fn App() -> Element {
         spawn(async {
             #[cfg(target_arch = "wasm32")]
             {
-                if let Some(req) = connect_request_from_location() {
-                    *CONNECT.write() = Some(req);
-                }
                 if let Err(e) = api::connect().await {
                     *SYNC_STATUS.write() = SyncStatus::Error(e);
                     return;
@@ -994,7 +997,7 @@ fn Detail(index: u32) -> Element {
     // Has the state ARRIVED (vs requested/pending)? "No profile yet" and
     // "state not here yet" must not be conflated: seeding the edit form from
     // a pending state would let Publish LWW-overwrite the real profile.
-    let arrived = published(index).is_some();
+    let arrived = with_published(index, |_| Some(())).is_some();
     let profile = published_profile(index);
     let avatar = published_avatar(index);
 
@@ -1039,6 +1042,8 @@ fn Detail(index: u32) -> Element {
 
     let addr = full_key(&pkb);
     let contract_id = crate::keys::identity_key(&pk).id().to_string();
+    // Encode once per render (it was cloned + re-encoded per use below).
+    let avatar_src = avatar.as_deref().map(avatar_data_url);
 
     let pub_name = profile.as_ref().map(|p| p.name.clone()).unwrap_or_default();
     let pub_bio = profile.as_ref().map(|p| p.bio.clone()).unwrap_or_default();
@@ -1053,8 +1058,8 @@ fn Detail(index: u32) -> Element {
 
             div { class: "card",
                 div { class: "id-head lg",
-                    match avatar.clone() {
-                        Some(bytes) => rsx! { img { class: "avatar lg", src: avatar_data_url(&bytes), alt: "" } },
+                    match avatar_src {
+                        Some(src) => rsx! { img { class: "avatar lg", src: src, alt: "" } },
                         None => rsx! { span { class: "avatar lg", style: identicon_style(&pkb) } },
                     }
                     div { class: "id-title",
@@ -1313,7 +1318,9 @@ fn PersonaLevel(index: u32) -> Element {
     let mut msg = use_signal(String::new);
     let mut err = use_signal(String::new);
 
-    let level = actions::persona_level(index);
+    // Memoized: verifying the proof is a signature check, and this card
+    // re-renders 5x/s while grinding (progress ticks).
+    let level = use_memo(use_reactive!(|index| actions::persona_level(index)))();
     let t = *target.read();
     let expected = 1u64 << t;
     let pct = (*tried.read() as f64 / expected as f64 * 100.0).min(99.0) as u32;
@@ -1392,7 +1399,7 @@ fn PersonaGhostkey(index: u32) -> Element {
     let mut input = use_signal(String::new);
     let mut busy = use_signal(|| false);
     let mut err = use_signal(String::new);
-    let badge = actions::persona_ghostkey(index);
+    let badge = use_memo(use_reactive!(|index| actions::persona_ghostkey(index)))();
     let payload = actions::identity_pubkey(index)
         .map(|pk| data_encoding::HEXLOWER.encode(&viso_core::ghostkey::binding_payload(&pk.to_bytes())))
         .unwrap_or_default();
