@@ -88,8 +88,12 @@ pub async fn connect() -> Result<(), String> {
                         *SYNC_STATUS.write() = SyncStatus::Error(e);
                     } else {
                         // Request-level error (e.g. Get for a contract that
-                        // doesn't exist yet) — the connection is fine.
+                        // doesn't exist yet, or UPDATE rejected) — keep the
+                        // connection alive and surface contract errors fast.
                         log(&format!("request error: {e}"));
+                        if e.contains("UPDATE failed") || e.contains("PUT failed") {
+                            *LAST_CONTRACT_ERR.write() = Some((keys::now_ms(), e));
+                        }
                     }
                 }
             }

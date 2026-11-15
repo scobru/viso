@@ -810,7 +810,8 @@ fn IdentityCard(index: u32, label: String) -> Element {
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| label.clone());
     let bio = profile.map(|p| p.bio).unwrap_or_default();
-    let poh_verified = actions::persona_poh_github(index, None).is_some();
+    let is_destroyed = actions::is_persona_destroyed(index);
+    let poh_verified = !is_destroyed && actions::persona_poh_github(index, None).is_some();
 
     rsx! {
         button { class: "card id-card", onclick: move |_| *VIEW.write() = View::Identity(index),
@@ -822,7 +823,9 @@ fn IdentityCard(index: u32, label: String) -> Element {
                 div {
                     div { class: "id-title-row",
                         h3 { "{display}" }
-                        if poh_verified {
+                        if is_destroyed {
+                            span { class: "destroyed-chip", title: "Permanently destroyed on Freenet", "Destroyed" }
+                        } else if poh_verified {
                             span { class: "poh-chip", title: "Anonymous GitHub PoH verified",
                                 GithubIcon { size: 12 }
                                 "Verified"
@@ -1069,6 +1072,64 @@ fn Detail(index: u32) -> Element {
 
     let addr = full_key(&pkb);
     let contract_id = crate::keys::identity_key(&pk).id().to_string();
+
+    if actions::is_persona_destroyed(index) {
+        let replace_label = entry_label.clone();
+        return rsx! {
+            section { class: "wrap narrow-wrap",
+                button { class: "ghost back", onclick: move |_| *VIEW.write() = View::Home, "← all personas" }
+                div { class: "card",
+                    div { class: "id-title-row",
+                        h3 { "{entry_label}" }
+                        span { class: "destroyed-chip", "Destroyed on Freenet" }
+                    }
+                    p { class: "muted",
+                        "This persona's contract on Freenet carries a permanent destruction marker, so it can no longer be updated or linked to a GitHub PoH badge."
+                    }
+                    p { class: "muted small",
+                        "Contract: " code { "{contract_id}" }
+                    }
+                    div { class: "row",
+                        button {
+                            class: "primary",
+                            disabled: *destroy_busy.read(),
+                            onclick: move |_| {
+                                destroy_busy.set(true);
+                                destroy_err.set(String::new());
+                                let lbl = replace_label.clone();
+                                spawn(async move {
+                                    match actions::replace_destroyed_persona(index, lbl).await {
+                                        Ok(new_idx) => *VIEW.write() = View::Identity(new_idx),
+                                        Err(e) => destroy_err.set(e),
+                                    }
+                                    destroy_busy.set(false);
+                                });
+                            },
+                            if *destroy_busy.read() { "Creating…" } else { "Restore as new persona" }
+                        }
+                        button {
+                            class: "ghost",
+                            disabled: *destroy_busy.read(),
+                            onclick: move |_| {
+                                destroy_busy.set(true);
+                                destroy_err.set(String::new());
+                                spawn(async move {
+                                    match actions::forget_destroyed_persona(index).await {
+                                        Ok(()) => *VIEW.write() = View::Home,
+                                        Err(e) => destroy_err.set(e),
+                                    }
+                                    destroy_busy.set(false);
+                                });
+                            },
+                            "Remove from this device"
+                        }
+                    }
+                    if !destroy_err.read().is_empty() { p { class: "error", "{destroy_err}" } }
+                }
+            }
+        };
+    }
+
     // Encode once per render (it was cloned + re-encoded per use below).
     let avatar_src = avatar.as_deref().map(avatar_data_url);
 

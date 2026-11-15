@@ -45,6 +45,11 @@ pub static POH_PENDING: GlobalSignal<BTreeMap<u32, PendingBlindState>> =
 pub static POH_STAGED: GlobalSignal<BTreeMap<u32, Vec<u8>>> =
     Signal::global(BTreeMap::new);
 
+/// Most recent node-level contract request error `(timestamp_ms, message)` so
+/// failed `Put`/`Update` calls fail fast with the real reason instead of
+/// hanging until `CONTRACT_ACK_TIMEOUT_MS`.
+pub static LAST_CONTRACT_ERR: GlobalSignal<Option<(u64, String)>> = Signal::global(|| None);
+
 /// The seed answer will never arrive (watchdog timeout or the node is
 /// swallowing delegate errors). Drives an explanatory error screen instead
 /// of an eternal spinner.

@@ -207,20 +207,65 @@ pub async fn restore_seed_opts(input: String, ensure_index_zero: bool) -> Result
             }
         }
     }
-    if ensure_index_zero && !meta.identities.iter().any(|e| e.index == 0) {
-        let pk = identity_signing_key(&s, 0).verifying_key();
+    if ensure_index_zero && meta.identities.is_empty() {
+        let index0_destroyed = {
+            let pk0 = identity_signing_key(&s, 0).verifying_key();
+            IDENTITY_STATES
+                .read()
+                .get(&pk0.to_bytes())
+                .and_then(|e| e.as_ref())
+                .is_some_and(|st| st.destroyed.is_some())
+        };
+        let fresh_index = if index0_destroyed { meta.alloc_index() } else { 0 };
+        let pk = identity_signing_key(&s, fresh_index).verifying_key();
         let _ = api::put_identity(&pk, &IdentityStateV1::default()).await;
         IDENTITY_STATES
             .write()
             .insert(pk.to_bytes(), Some(IdentityStateV1::default()));
         meta.identities.push(IdentityEntry {
-            index: 0,
-            label: "persona 0".into(),
+            index: fresh_index,
+            label: format!("persona {fresh_index}"),
         });
         meta.identities.sort_by_key(|e| e.index);
-        meta.next_index = meta.next_index.max(1);
+        meta.next_index = meta.next_index.max(fresh_index + 1);
     }
     store_meta(&meta).await
+}
+
+/// Returns `true` if the fetched contract state for `index` carries a signed
+/// permanent destruction marker.
+pub fn is_persona_destroyed(index: u32) -> bool {
+    let Some(pk) = identity_pubkey(index) else {
+        return false;
+    };
+    IDENTITY_STATES
+        .read()
+        .get(&pk.to_bytes())
+        .and_then(|e| e.as_ref())
+        .is_some_and(|s| s.destroyed.is_some())
+}
+
+/// Remove a destroyed (unusable) persona and its temporary PoH secrets from this
+/// device's local metadata list without modifying Freenet state.
+pub async fn forget_destroyed_persona(index: u32) -> Result<(), String> {
+    let mut meta = META.read().clone();
+    meta.identities.retain(|e| e.index != index);
+    meta.next_index = meta.next_index.max(index + 1);
+    store_meta(&meta).await?;
+    for key in [poh_pending_key(index), poh_staged_key(index)] {
+        let _ = api::kv_request(WhoiamDelegateRequest::Delete { key }).await;
+    }
+    POH_PENDING.write().remove(&index);
+    POH_STAGED.write().remove(&index);
+    Ok(())
+}
+
+/// Create a fresh persona at the next unused index (preserving `label`) and
+/// forget the destroyed one at `old_index` from this device.
+pub async fn replace_destroyed_persona(old_index: u32, label: String) -> Result<u32, String> {
+    let new_index = create_identity(label).await?;
+    forget_destroyed_persona(old_index).await?;
+    Ok(new_index)
 }
 
 /// Manually re-attach one index restore probing missed (e.g. the contract
@@ -286,6 +331,9 @@ pub async fn rename_identity(index: u32, label: String) -> Result<(), String> {
 /// state (dispatch merges notifications for tracked contracts). No
 /// optimistic apply — "published ✓" must mean the node accepted it.
 async fn publish_slot(index: u32, name: &str, bytes: Vec<u8>) -> Result<(), String> {
+    if is_persona_destroyed(index) {
+        return Err("this persona was permanently destroyed on Freenet and cannot be updated".into());
+    }
     let sk = signing_key(index)?;
     let pk = sk.verifying_key();
     let time_ms = keys::now_ms();
@@ -293,25 +341,47 @@ async fn publish_slot(index: u32, name: &str, bytes: Vec<u8>) -> Result<(), Stri
     let mut delta = IdentityStateV1::default();
     delta.slots.insert(name.to_string(), slot);
     let baseline = api::contract_acks(&pk);
+    let contract_id = keys::identity_key(&pk).id().to_string();
+    let started_ms = keys::now_ms();
     api::update_identity(&pk, &delta).await?;
     let slot_name = name.to_string();
     let pkb = pk.to_bytes();
+    let cid_check = contract_id.clone();
     wait_until(
         move || {
             if api::contract_acks(&pk) > baseline {
                 return true;
             }
-            IDENTITY_STATES
+            if IDENTITY_STATES
                 .peek()
                 .get(&pkb)
                 .and_then(|e| e.as_ref())
                 .and_then(|s| s.slots.get(&slot_name))
                 .is_some_and(|s| s.time_ms >= time_ms)
+            {
+                return true;
+            }
+            LAST_CONTRACT_ERR
+                .peek()
+                .as_ref()
+                .is_some_and(|(ts, msg)| *ts >= started_ms && msg.contains(&cid_check))
         },
         CONTRACT_ACK_TIMEOUT_MS,
         "publishing",
     )
     .await?;
+    if let Some((ts, msg)) = LAST_CONTRACT_ERR.peek().as_ref() {
+        if *ts >= started_ms && msg.contains(&contract_id) {
+            if msg.contains("identity destroyed") {
+                // Re-fetch so local state mirrors the destruction marker.
+                let _ = api::fetch_identity(&pk).await;
+                return Err(
+                    "this persona is permanently destroyed on Freenet and cannot be updated".into(),
+                );
+            }
+            return Err(msg.clone());
+        }
+    }
     // Confirmed: mirror locally (idempotent if the echo already merged it).
     api::merge_identity(&pk, &delta)
 }
