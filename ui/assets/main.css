@@ -215,7 +215,7 @@ button.card:hover { transform: translateY(-2px); border-color: var(--accent-a); 
 
 label { font-size: 13px; color: var(--muted); margin-top: 4px; }
 
-input, textarea {
+input, textarea, select {
   background: var(--bg-soft);
   border: 1px solid var(--card-border);
   color: var(--text);
@@ -224,7 +224,7 @@ input, textarea {
   font: inherit;
   width: 100%;
 }
-input:focus, textarea:focus, button:focus-visible {
+input:focus, textarea:focus, select:focus, button:focus-visible {
   outline: 2px solid var(--accent-a);
   outline-offset: 1px;
 }

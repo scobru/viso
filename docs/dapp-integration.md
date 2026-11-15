@@ -439,3 +439,74 @@ Use `scripts/sync-poh-issuers.ps1` to pull active public keys from a running Gat
 ```
 
 If you reject an unverified user in your app UI, prompt them to open Viso, select their persona, and complete **"Anonymous GitHub PoH → Connect with GitHub"** — once attached, your app sees the `poh:github` slot on the next persona fetch without requiring a new login.
+
+---
+
+## 7. Persona-to-Persona Handoff (`DelegationProofV1`)
+
+When a user wants to rotate keys or keep an existing app identity anchored to `from` (even if `from`'s Viso contract on Freenet is `Destroyed on Freenet`) while fetching mutable profile slots / PoH badges from a live persona `to`, Viso can issue a dual-signed JSON certificate under **"Delegate to another persona"**:
+
+```json
+{
+  "version": 1,
+  "from": "<base58 Ed25519 pubkey>",
+  "to": "<base58 Ed25519 pubkey>",
+  "scope": "*",
+  "time_ms": 1794781500000,
+  "sig_from": "<128-char hex Ed25519 signature by from>",
+  "sig_to": "<128-char hex Ed25519 signature by to>"
+}
+```
+
+Both `from` and `to` sign the exact same domain-separated message, proving ownership of both Ed25519 keys without weakening Viso's global contract-destruction guarantees:
+
+```text
+"viso-delegation-v1" || from(32 bytes) || to(32 bytes) || u32le(scope.len) || scope(utf8) || u64le(time_ms)
+```
+
+### Verification in Rust (`viso-core` / `viso-client`)
+
+```rust
+use viso_client::delegation::{verify_delegation, DelegationProofV1};
+
+let proof: DelegationProofV1 = /* parsed JSON */;
+let verified = verify_delegation(&proof)?;
+// Store in your app state: `verified.from` delegates `verified.scope` to `verified.to`.
+```
+
+### Verification in TypeScript (`@noble/ed25519`)
+
+```ts
+import * as ed from "@noble/ed25519";
+
+const enc = new TextEncoder();
+
+function delegationMessage(fromBytes: Uint8Array, toBytes: Uint8Array, scope: string, timeMs: number): Uint8Array {
+  const domain = enc.encode("viso-delegation-v1");
+  const scopeBytes = enc.encode(scope);
+  const out = new Uint8Array(domain.length + 32 + 32 + 4 + scopeBytes.length + 8);
+  const view = new DataView(out.buffer);
+  let off = 0;
+  out.set(domain, off); off += domain.length;
+  out.set(fromBytes, off); off += 32;
+  out.set(toBytes, off); off += 32;
+  view.setUint32(off, scopeBytes.length, true); off += 4;
+  out.set(scopeBytes, off); off += scopeBytes.length;
+  view.setBigUint64(off, BigInt(timeMs), true);
+  return out;
+}
+
+export async function verifyDelegationProof(
+  proof: { version: number; from: string; to: string; scope: string; time_ms: number; sig_from: string; sig_to: string },
+  decodePubkey: (pk: string) => Uint8Array,
+  unhex: (h: string) => Uint8Array,
+): Promise<boolean> {
+  if (proof.version !== 1 || !proof.scope || proof.from === proof.to) return false;
+  const fromBytes = decodePubkey(proof.from);
+  const toBytes = decodePubkey(proof.to);
+  const msg = delegationMessage(fromBytes, toBytes, proof.scope, proof.time_ms);
+  const okFrom = await ed.verifyAsync(unhex(proof.sig_from), msg, fromBytes);
+  const okTo = await ed.verifyAsync(unhex(proof.sig_to), msg, toBytes);
+  return okFrom && okTo;
+}
+```

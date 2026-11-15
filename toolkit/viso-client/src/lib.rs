@@ -25,6 +25,7 @@ use freenet_stdlib::prelude::*;
 use viso_core::merge::validate_full;
 use viso_core::resources::{ProfileV1, SLOT_AVATAR, SLOT_POH_PREFIX, SLOT_PROFILE};
 use viso_core::state::{IdentityParamsV1, IdentityStateV1};
+pub use viso_core::delegation;
 
 /// The exact contract bytes every canonical whoiam build publishes with.
 /// Addresses are hash(wasm + params); changing these bytes rotates every

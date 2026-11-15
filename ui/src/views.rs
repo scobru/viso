@@ -1175,6 +1175,7 @@ fn Detail(index: u32) -> Element {
                 }
 
                 PersonaKeyCards { index, addr, contract_id }
+                PersonaDelegationCard { index }
             }
         };
     }
@@ -1353,6 +1354,7 @@ fn Detail(index: u32) -> Element {
             PersonaPoh { index }
 
             PersonaKeyCards { index, addr, contract_id }
+            PersonaDelegationCard { index }
 
             details { class: "card danger",
                 summary { h3 { "Danger zone" } }
@@ -1451,6 +1453,117 @@ fn PersonaKeyCards(index: u32, addr: String, contract_id: String) -> Element {
                 },
             }
             if !sk_err.read().is_empty() { p { class: "error", "{sk_err}" } }
+        }
+    }
+}
+
+/// Dual-signed persona handoff certificate generator (`from` -> an active `to` persona).
+#[component]
+fn PersonaDelegationCard(index: u32) -> Element {
+    let mut selected_target = use_signal(|| None::<u32>);
+    let mut scope = use_signal(|| "*".to_string());
+    let mut proof_json = use_signal(String::new);
+    let mut err = use_signal(String::new);
+
+    let targets: Vec<(u32, String, String)> = META
+        .read()
+        .identities
+        .iter()
+        .filter(|e| e.index != index && !actions::is_persona_destroyed(e.index))
+        .filter_map(|e| {
+            let pk = actions::identity_pubkey(e.index)?;
+            Some((e.index, e.label.clone(), short_key(&pk.to_bytes())))
+        })
+        .collect();
+
+    let active_target = selected_target
+        .read()
+        .filter(|t| targets.iter().any(|(idx, _, _)| idx == t))
+        .or_else(|| targets.first().map(|(idx, _, _)| *idx));
+
+    rsx! {
+        details { class: "card", open: actions::is_persona_destroyed(index),
+            summary { h3 { "Delegate to another persona" } }
+            p { class: "muted",
+                "Generate a dual-signed handoff certificate authorizing another active (non-destroyed) persona on this device to represent this key in supporting apps (such as Radica) — useful for recovering PoH/profile via a live persona or rotating keys."
+            }
+            if targets.is_empty() {
+                p { class: "muted small",
+                    "No other active (non-destroyed) personas exist on this device yet. Create or import another persona first, then come back here to sign a delegation certificate."
+                }
+            } else {
+                label { "Target active persona" }
+                select {
+                    value: "{active_target.unwrap_or(0)}",
+                    onchange: move |e| {
+                        if let Ok(parsed) = e.value().parse::<u32>() {
+                            selected_target.set(Some(parsed));
+                            proof_json.set(String::new());
+                            err.set(String::new());
+                        }
+                    },
+                    for (idx, lbl, short) in targets.iter() {
+                        option {
+                            key: "{idx}",
+                            value: "{idx}",
+                            selected: Some(*idx) == active_target,
+                            "{lbl} ({short})"
+                        }
+                    }
+                }
+                label { "Scope (optional)" }
+                input {
+                    value: "{scope}",
+                    placeholder: "* for all apps, or e.g. radica",
+                    oninput: move |e| {
+                        scope.set(e.value());
+                        err.set(String::new());
+                    },
+                }
+                div { class: "row",
+                    button {
+                        class: "primary",
+                        onclick: move |_| {
+                            err.set(String::new());
+                            proof_json.set(String::new());
+                            let Some(target_idx) = active_target else {
+                                err.set("Select a target active persona".to_string());
+                                return;
+                            };
+                            match actions::sign_delegation_proof(
+                                index,
+                                target_idx,
+                                &scope.read(),
+                                crate::keys::now_ms(),
+                            )
+                            .and_then(|p| p.to_json())
+                            {
+                                Ok(json) => proof_json.set(json),
+                                Err(e) => err.set(e),
+                            }
+                        },
+                        "Sign delegation certificate"
+                    }
+                    if !proof_json.read().is_empty() {
+                        button {
+                            class: "ghost",
+                            onclick: move |_| proof_json.set(String::new()),
+                            "clear"
+                        }
+                    }
+                }
+                if !proof_json.read().is_empty() {
+                    label { "Signed delegation certificate (JSON)" }
+                    div { class: "keyrow",
+                        code { "{proof_json}" }
+                        CopyButton { text: proof_json.read().clone(), label: "copy JSON".to_string() }
+                    }
+                    p { class: "muted small",
+                        "Signed by both keys locally. Paste this certificate into a supporting app to bind this key to your active persona."
+                    }
+                }
+            }
+            if !err.read().is_empty() { p { class: "error", "{err}" } }
         }
     }
 }

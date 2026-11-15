@@ -40,6 +40,26 @@ pub fn persona_secret_bytes(index: u32) -> Result<[u8; 32], String> {
     signing_key(index).map(|sk| sk.to_bytes())
 }
 
+/// Sign a dual-key persona handoff certificate (`from_index` -> `to_index`)
+/// using keys derived locally from the delegate seed. Works even when
+/// `from_index`'s Viso contract is destroyed on Freenet.
+pub fn sign_delegation_proof(
+    from_index: u32,
+    to_index: u32,
+    scope: &str,
+    time_ms: u64,
+) -> Result<viso_core::delegation::DelegationProofV1, String> {
+    let scope = scope.trim();
+    let scope = if scope.is_empty() {
+        viso_core::delegation::DELEGATION_DEFAULT_SCOPE
+    } else {
+        scope
+    };
+    let from_sk = signing_key(from_index)?;
+    let to_sk = signing_key(to_index)?;
+    viso_core::delegation::sign_delegation(&from_sk, &to_sk, scope, time_ms)
+}
+
 fn signing_key(index: u32) -> Result<SigningKey, String> {
     seed()
         .map(|s| identity_signing_key(&s, index))
@@ -900,6 +920,23 @@ mod tests {
             let sk_bytes = super::persona_secret_bytes(0).unwrap();
             let sk = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
             assert_eq!(sk.verifying_key(), super::identity_pubkey(0).unwrap());
+            VNode::empty()
+        }
+        let mut dom = VirtualDom::new(test_app);
+        dom.rebuild_to_vec();
+    }
+
+    #[test]
+    fn delegation_proof_signs_both_keys() {
+        use dioxus::prelude::*;
+        fn test_app() -> Element {
+            *crate::state::SEED_LOADED.write() = Some(Some(SEED));
+            let proof = super::sign_delegation_proof(0, 1, "  ", 1_794_781_500_000).unwrap();
+            let verified = viso_core::delegation::verify_delegation(&proof).unwrap();
+            assert_eq!(verified.from, super::identity_pubkey(0).unwrap());
+            assert_eq!(verified.to, super::identity_pubkey(1).unwrap());
+            assert_eq!(verified.scope, "*");
+            assert!(super::sign_delegation_proof(0, 0, "*", 1000).is_err());
             VNode::empty()
         }
         let mut dom = VirtualDom::new(test_app);
