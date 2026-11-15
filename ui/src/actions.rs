@@ -207,7 +207,7 @@ pub async fn restore_seed_opts(input: String, ensure_index_zero: bool) -> Result
             }
         }
     }
-    if ensure_index_zero && meta.identities.is_empty() {
+    if ensure_index_zero && !meta.identities.iter().any(|e| e.index == 0) {
         let index0_destroyed = {
             let pk0 = identity_signing_key(&s, 0).verifying_key();
             IDENTITY_STATES
@@ -216,18 +216,32 @@ pub async fn restore_seed_opts(input: String, ensure_index_zero: bool) -> Result
                 .and_then(|e| e.as_ref())
                 .is_some_and(|st| st.destroyed.is_some())
         };
-        let fresh_index = if index0_destroyed { meta.alloc_index() } else { 0 };
-        let pk = identity_signing_key(&s, fresh_index).verifying_key();
-        let _ = api::put_identity(&pk, &IdentityStateV1::default()).await;
-        IDENTITY_STATES
-            .write()
-            .insert(pk.to_bytes(), Some(IdentityStateV1::default()));
-        meta.identities.push(IdentityEntry {
-            index: fresh_index,
-            label: format!("persona {fresh_index}"),
-        });
-        meta.identities.sort_by_key(|e| e.index);
-        meta.next_index = meta.next_index.max(fresh_index + 1);
+        if !index0_destroyed {
+            let pk = identity_signing_key(&s, 0).verifying_key();
+            let _ = api::put_identity(&pk, &IdentityStateV1::default()).await;
+            IDENTITY_STATES
+                .write()
+                .insert(pk.to_bytes(), Some(IdentityStateV1::default()));
+            meta.identities.push(IdentityEntry {
+                index: 0,
+                label: "persona 0".into(),
+            });
+            meta.identities.sort_by_key(|e| e.index);
+            meta.next_index = meta.next_index.max(1);
+        } else if meta.identities.is_empty() {
+            let fresh_index = meta.alloc_index();
+            let pk = identity_signing_key(&s, fresh_index).verifying_key();
+            let _ = api::put_identity(&pk, &IdentityStateV1::default()).await;
+            IDENTITY_STATES
+                .write()
+                .insert(pk.to_bytes(), Some(IdentityStateV1::default()));
+            meta.identities.push(IdentityEntry {
+                index: fresh_index,
+                label: format!("persona {fresh_index}"),
+            });
+            meta.identities.sort_by_key(|e| e.index);
+            meta.next_index = meta.next_index.max(fresh_index + 1);
+        }
     }
     store_meta(&meta).await
 }

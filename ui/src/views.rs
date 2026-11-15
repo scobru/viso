@@ -884,10 +884,60 @@ fn BackupCard() -> Element {
 
 #[component]
 fn ImportView() -> Element {
+    let mut confirm_fresh = use_signal(|| false);
+    let mut fresh_busy = use_signal(|| false);
+    let mut fresh_err = use_signal(String::new);
+
     rsx! {
         section { class: "wrap narrow-wrap",
             button { class: "ghost back", onclick: move |_| *VIEW.write() = View::Home, "← all personas" }
             ImportCard {}
+            div { class: "card",
+                h3 { "Start fresh with a new seed" }
+                p { class: "muted",
+                    "Generate a brand-new master seed on this node and clear the current persona list. Export your backup first if you ever want these personas back."
+                }
+                div { class: "row",
+                    if *confirm_fresh.read() {
+                        button {
+                            class: "primary",
+                            disabled: *fresh_busy.read(),
+                            onclick: move |_| {
+                                fresh_busy.set(true);
+                                fresh_err.set(String::new());
+                                spawn(async move {
+                                    match actions::create_seed().await {
+                                        Ok(()) => {
+                                            *IDENTITY_STATES.write() = Default::default();
+                                            *POH_PENDING.write() = Default::default();
+                                            *POH_STAGED.write() = Default::default();
+                                            *VIEW.write() = View::Home;
+                                        }
+                                        Err(e) => fresh_err.set(e),
+                                    }
+                                    confirm_fresh.set(false);
+                                    fresh_busy.set(false);
+                                });
+                            },
+                            if *fresh_busy.read() { "Generating…" } else { "Confirm new seed" }
+                        }
+                        button {
+                            class: "ghost",
+                            disabled: *fresh_busy.read(),
+                            onclick: move |_| confirm_fresh.set(false),
+                            "Cancel"
+                        }
+                    } else {
+                        button {
+                            class: "ghost",
+                            disabled: *fresh_busy.read(),
+                            onclick: move |_| confirm_fresh.set(true),
+                            "Create new master seed"
+                        }
+                    }
+                }
+                if !fresh_err.read().is_empty() { p { class: "error", "{fresh_err}" } }
+            }
         }
     }
 }
