@@ -40,6 +40,11 @@ pub static IDENTITY_STATES: GlobalSignal<BTreeMap<[u8; 32], Option<IdentityState
 pub static POH_PENDING: GlobalSignal<BTreeMap<u32, PendingBlindState>> =
     Signal::global(BTreeMap::new);
 
+/// Verified, unblinded `poh:github` slot bytes staged in `viso-delegate`
+/// (`pohstaged:<index>`) so a Freenet publish timeout never loses an issued badge.
+pub static POH_STAGED: GlobalSignal<BTreeMap<u32, Vec<u8>>> =
+    Signal::global(BTreeMap::new);
+
 /// The seed answer will never arrive (watchdog timeout or the node is
 /// swallowing delegate errors). Drives an explanatory error screen instead
 /// of an eternal spinner.

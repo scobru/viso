@@ -1514,6 +1514,8 @@ fn PersonaPoh(index: u32) -> Element {
     let mut token_input = use_signal(String::new);
     let mut busy = use_signal(|| false);
     let mut err = use_signal(String::new);
+    let mut confirm_reset = use_signal(|| false);
+    let mut confirm_discard_staged = use_signal(|| false);
 
     use_effect(use_reactive!(|index| {
         spawn(async move {
@@ -1533,6 +1535,7 @@ fn PersonaPoh(index: u32) -> Element {
         actions::persona_poh_github(index, custom_pair)
     };
     let has_pending = POH_PENDING.read().contains_key(&index);
+    let has_staged = POH_STAGED.read().contains_key(&index);
     let pinned_github: Vec<_> = viso_core::poh::POH_ISSUERS
         .iter()
         .filter(|i| i.provider == "github")
@@ -1586,6 +1589,71 @@ fn PersonaPoh(index: u32) -> Element {
                             });
                         },
                         "Remove badge"
+                    }
+                },
+                None if has_staged => rsx! {
+                    div { class: "poh-step",
+                        div { class: "poh-step-head",
+                            span { class: "poh-step-num", "✓" }
+                            span { "Verified badge ready to publish" }
+                            span { class: "ok small", "saved locally" }
+                        }
+                        p { class: "muted small",
+                            "Your GitHub attestation is already unblinded, verified, and saved in your key store. Retry publishing it to Freenet — no new GitHub login needed."
+                        }
+                        div { class: "row",
+                            button {
+                                class: "primary",
+                                disabled: *busy.read(),
+                                onclick: move |_| {
+                                    busy.set(true);
+                                    err.set(String::new());
+                                    spawn(async move {
+                                        match actions::retry_publish_poh_github(index).await {
+                                            Ok(()) => {
+                                                token_input.set(String::new());
+                                                auth_url.set(String::new());
+                                                confirm_discard_staged.set(false);
+                                            }
+                                            Err(e) => err.set(e),
+                                        }
+                                        busy.set(false);
+                                    });
+                                },
+                                "Publish badge to Freenet"
+                            }
+                            if *confirm_discard_staged.read() {
+                                button {
+                                    class: "ghost small",
+                                    disabled: *busy.read(),
+                                    onclick: move |_| {
+                                        busy.set(true);
+                                        err.set(String::new());
+                                        spawn(async move {
+                                            if let Err(e) = actions::discard_poh_staged(index).await {
+                                                err.set(e);
+                                            }
+                                            confirm_discard_staged.set(false);
+                                            busy.set(false);
+                                        });
+                                    },
+                                    "Confirm discard"
+                                }
+                                button {
+                                    class: "ghost small",
+                                    disabled: *busy.read(),
+                                    onclick: move |_| confirm_discard_staged.set(false),
+                                    "Cancel"
+                                }
+                            } else {
+                                button {
+                                    class: "ghost small",
+                                    disabled: *busy.read(),
+                                    onclick: move |_| confirm_discard_staged.set(true),
+                                    "Discard"
+                                }
+                            }
+                        }
                     }
                 },
                 None => rsx! {
@@ -1644,44 +1712,86 @@ fn PersonaPoh(index: u32) -> Element {
                                 span { class: "ok small", "✓ blinding secret saved" }
                             }
                         }
-                        div { class: "row",
-                            button { class: "github-btn", disabled: *busy.read(),
-                                onclick: move |_| {
-                                    busy.set(true);
-                                    err.set(String::new());
-                                    let gk = gatekeeper_url.read().clone();
-                                    let sel = selected_pinned.read().clone();
-                                    let ck = custom_key_id.read().clone();
-                                    let cb = custom_spki_b64.read().clone();
-                                    spawn(async move {
-                                        let resolved = if let Some(pinned) = viso_core::poh::find_issuer(viso_core::poh::POH_ISSUERS, &sel) {
-                                            Ok((pinned.key_id.to_string(), pinned.spki_der.to_vec()))
-                                        } else {
-                                            base64::engine::general_purpose::STANDARD
-                                                .decode(cb.trim())
-                                                .map(|der| (ck, der))
-                                                .map_err(|_| "configure or paste a valid issuer SPKI (base64) in settings".to_string())
-                                        };
-                                        match resolved {
-                                            Ok((kid, spki)) => {
-                                                match actions::start_poh_github(index, &gk, &kid, &spki).await {
-                                                    Ok(url) => {
-                                                        auth_url.set(url.clone());
-                                                        #[cfg(target_arch = "wasm32")]
-                                                        if let Some(win) = web_sys::window() {
-                                                            let _ = win.open_with_url_and_target(&url, "_blank");
-                                                        }
-                                                    }
-                                                    Err(e) => err.set(e),
+                        if has_pending {
+                            p { class: "muted small",
+                                "A blinding secret is already saved for this persona. Paste your VISO-POH-V1 token in Step 2 — resetting overwrites this secret and invalidates any token from the previous GitHub tab."
+                            }
+                            div { class: "row",
+                                if *confirm_reset.read() {
+                                    button {
+                                        class: "ghost small",
+                                        disabled: *busy.read(),
+                                        onclick: move |_| {
+                                            busy.set(true);
+                                            err.set(String::new());
+                                            spawn(async move {
+                                                if let Err(e) = actions::clear_poh_pending(index).await {
+                                                    err.set(e);
+                                                } else {
+                                                    auth_url.set(String::new());
                                                 }
+                                                confirm_reset.set(false);
+                                                busy.set(false);
+                                            });
+                                        },
+                                        "Confirm reset secret"
+                                    }
+                                    button {
+                                        class: "ghost small",
+                                        disabled: *busy.read(),
+                                        onclick: move |_| confirm_reset.set(false),
+                                        "Cancel"
+                                    }
+                                } else {
+                                    button {
+                                        class: "ghost small",
+                                        disabled: *busy.read(),
+                                        onclick: move |_| confirm_reset.set(true),
+                                        "Start over (new request)"
+                                    }
+                                }
+                            }
+                        } else {
+                            div { class: "row",
+                                button { class: "github-btn", disabled: *busy.read(),
+                                    onclick: move |_| {
+                                        busy.set(true);
+                                        err.set(String::new());
+                                        let gk = gatekeeper_url.read().clone();
+                                        let sel = selected_pinned.read().clone();
+                                        let ck = custom_key_id.read().clone();
+                                        let cb = custom_spki_b64.read().clone();
+                                        spawn(async move {
+                                            let resolved = if let Some(pinned) = viso_core::poh::find_issuer(viso_core::poh::POH_ISSUERS, &sel) {
+                                                Ok((pinned.key_id.to_string(), pinned.spki_der.to_vec()))
+                                            } else {
+                                                base64::engine::general_purpose::STANDARD
+                                                    .decode(cb.trim())
+                                                    .map(|der| (ck, der))
+                                                    .map_err(|_| "configure or paste a valid issuer SPKI (base64) in settings".to_string())
+                                            };
+                                            match resolved {
+                                                Ok((kid, spki)) => {
+                                                    match actions::start_poh_github(index, &gk, &kid, &spki).await {
+                                                        Ok(url) => {
+                                                            auth_url.set(url.clone());
+                                                            confirm_reset.set(false);
+                                                            #[cfg(target_arch = "wasm32")]
+                                                            if let Some(win) = web_sys::window() {
+                                                                let _ = win.open_with_url_and_target(&url, "_blank");
+                                                            }
+                                                        }
+                                                        Err(e) => err.set(e),
+                                                    }
+                                                }
+                                                Err(e) => err.set(e),
                                             }
-                                            Err(e) => err.set(e),
-                                        }
-                                        busy.set(false);
-                                    });
-                                },
-                                GithubIcon { size: 18 }
-                                "Connect with GitHub"
+                                            busy.set(false);
+                                        });
+                                    },
+                                    GithubIcon { size: 18 }
+                                    "Connect with GitHub"
+                                }
                             }
                         }
                         if !auth_url.read().is_empty() {

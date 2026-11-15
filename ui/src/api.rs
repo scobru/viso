@@ -481,6 +481,17 @@ fn dispatch_kv(payload: &[u8]) {
                         },
                     }
                 }
+            } else if let Some(idx_str) = key.strip_prefix("pohstaged:") {
+                if let Ok(idx) = idx_str.parse::<u32>() {
+                    match value.as_deref() {
+                        Some(v) if !v.is_empty() => {
+                            POH_STAGED.write().insert(idx, v.to_vec());
+                        }
+                        _ => {
+                            POH_STAGED.write().remove(&idx);
+                        }
+                    }
+                }
             }
         }
         Ok(WhoiamDelegateResponse::Stored { key }) => {
