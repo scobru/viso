@@ -23,7 +23,7 @@ use freenet_stdlib::client_api::{
 use freenet_stdlib::prelude::*;
 
 use viso_core::merge::validate_full;
-use viso_core::resources::{ProfileV1, SLOT_AVATAR, SLOT_PROFILE};
+use viso_core::resources::{ProfileV1, SLOT_AVATAR, SLOT_POH_PREFIX, SLOT_PROFILE};
 use viso_core::state::{IdentityParamsV1, IdentityStateV1};
 
 /// The exact contract bytes every canonical whoiam build publishes with.
@@ -63,6 +63,10 @@ pub struct Identity {
     /// Freenet master key and bound to this identity. `None` if absent or
     /// invalid — a bad proof is dropped, not a fetch failure.
     pub ghostkey: Option<viso_core::ghostkey::GhostkeyBadge>,
+    /// Anonymous Proof-of-Personhood attestations from `poh:*` slots, verified
+    /// against pinned issuer public keys and bound to this identity. Invalid or
+    /// unrecognized slots are omitted rather than failing the fetch.
+    pub poh: Vec<viso_core::poh::PohBadge>,
     pub raw_slots: BTreeMap<String, Vec<u8>>,
 }
 
@@ -154,12 +158,18 @@ pub(crate) fn identity_from_state(
     let ghostkey = raw_slots
         .get(viso_core::resources::SLOT_GHOSTKEY)
         .and_then(|b| viso_core::ghostkey::verify_badge(b, pk.as_bytes()).ok());
+    let poh = raw_slots
+        .iter()
+        .filter(|(name, _)| name.starts_with(SLOT_POH_PREFIX))
+        .filter_map(|(_, b)| viso_core::poh::verify_attestation(b, pk.as_bytes()).ok())
+        .collect();
     Ok(Identity {
         pubkey: *pk,
         profile,
         avatar,
         ante_bits,
         ghostkey,
+        poh,
         raw_slots,
     })
 }
@@ -330,5 +340,19 @@ mod tests {
             identity_from_state(&pk, &state),
             Err(FetchError::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn invalid_poh_slot_is_omitted_not_fatal() {
+        let sk = key();
+        let pk = sk.verifying_key();
+        let mut state = IdentityStateV1::default();
+        state.slots.insert(
+            viso_core::resources::SLOT_POH_GITHUB.into(),
+            sign_slot(&sk, viso_core::resources::SLOT_POH_GITHUB, 100, b"garbage".to_vec()),
+        );
+        let id = identity_from_state(&pk, &state).unwrap();
+        assert!(id.poh.is_empty());
+        assert!(id.raw_slots.contains_key(viso_core::resources::SLOT_POH_GITHUB));
     }
 }

@@ -5,3 +5,6 @@ dist/
 .playwright-mcp/
 /*.png
 e2e/test-results/
+gatekeeper/keys/
+gatekeeper/data/
+gatekeeper/issuers.json

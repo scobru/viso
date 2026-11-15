@@ -8,6 +8,10 @@ pub const SLOT_PROFILE: &str = "profile";
 pub const SLOT_AVATAR: &str = "avatar";
 /// Optional Freenet ghostkey proof (see `ghostkey` module, feature `ghostkey`).
 pub const SLOT_GHOSTKEY: &str = "ghostkey";
+/// Prefix for anonymous Proof-of-Personhood attestation slots (`poh:<provider>`).
+pub const SLOT_POH_PREFIX: &str = "poh:";
+/// Anonymous GitHub Proof-of-Personhood slot (see `poh` module, feature `poh`).
+pub const SLOT_POH_GITHUB: &str = "poh:github";
 
 pub const MAX_NAME_CHARS: usize = 64;
 pub const MAX_BIO_CHARS: usize = 280;

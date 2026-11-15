@@ -467,6 +467,20 @@ fn dispatch_kv(payload: &[u8]) {
                         }
                     },
                 }
+            } else if let Some(idx_str) = key.strip_prefix("pohpending:") {
+                if let Ok(idx) = idx_str.parse::<u32>() {
+                    match value.as_deref() {
+                        None => {
+                            POH_PENDING.write().remove(&idx);
+                        }
+                        Some(v) => match viso_core::from_cbor::<viso_core::poh::PendingBlindState>(v) {
+                            Ok(pending) => {
+                                POH_PENDING.write().insert(idx, pending);
+                            }
+                            Err(e) => log(&format!("bad pohpending:{idx} in delegate: {e}")),
+                        },
+                    }
+                }
             }
         }
         Ok(WhoiamDelegateResponse::Stored { key }) => {

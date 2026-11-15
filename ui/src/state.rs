@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use dioxus::prelude::*;
 use freenet_stdlib::client_api::WebApi;
 use viso_core::delegate_api::IdentityMeta;
+use viso_core::poh::PendingBlindState;
 use viso_core::state::IdentityStateV1;
 
 #[derive(Clone, PartialEq, Debug, Default)]
@@ -32,6 +33,11 @@ pub static META_LOADED: GlobalSignal<bool> = Signal::global(|| false);
 /// Published contract state per identity pubkey. None = requested, not yet
 /// arrived (or the contract doesn't exist on the network yet).
 pub static IDENTITY_STATES: GlobalSignal<BTreeMap<[u8; 32], Option<IdentityStateV1>>> =
+    Signal::global(BTreeMap::new);
+
+/// Pending Blind-RSA PoH blinding secrets persisted in `viso-delegate`
+/// (`pohpending:<index>`) across the external OAuth round-trip.
+pub static POH_PENDING: GlobalSignal<BTreeMap<u32, PendingBlindState>> =
     Signal::global(BTreeMap::new);
 
 /// The seed answer will never arrive (watchdog timeout or the node is

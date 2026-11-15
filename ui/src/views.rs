@@ -1213,6 +1213,7 @@ fn Detail(index: u32) -> Element {
 
             PersonaLevel { index }
             PersonaGhostkey { index }
+            PersonaPoh { index }
 
             div { class: "card",
                 h3 { "Share with apps" }
@@ -1456,6 +1457,217 @@ fn PersonaGhostkey(index: u32) -> Element {
                             });
                         },
                         "Attach badge"
+                    }
+                },
+            }
+            if !err.read().is_empty() { p { class: "error", "{err}" } }
+        }
+    }
+}
+
+/// Optional anonymous GitHub Proof-of-Personhood badge (`poh:github`).
+#[component]
+fn PersonaPoh(index: u32) -> Element {
+    use base64::Engine;
+    let mut gatekeeper_url = use_signal(|| {
+        option_env!("VISO_GATEKEEPER_URL")
+            .unwrap_or("http://127.0.0.1:8080")
+            .to_string()
+    });
+    let mut custom_key_id = use_signal(|| "github:age1y:2026".to_string());
+    let mut custom_spki_b64 = use_signal(String::new);
+    let mut selected_pinned = use_signal(|| {
+        viso_core::poh::POH_ISSUERS
+            .iter()
+            .find(|i| i.provider == "github")
+            .map(|i| i.key_id.to_string())
+            .unwrap_or_default()
+    });
+    let mut auth_url = use_signal(String::new);
+    let mut token_input = use_signal(String::new);
+    let mut busy = use_signal(|| false);
+    let mut err = use_signal(String::new);
+
+    use_effect(use_reactive!(|index| {
+        spawn(async move {
+            actions::load_poh_pending(index).await;
+        });
+    }));
+
+    let custom_spki_bytes = base64::engine::general_purpose::STANDARD
+        .decode(custom_spki_b64.read().trim())
+        .ok();
+    let custom_ref = custom_spki_bytes
+        .as_deref()
+        .map(|b| (custom_key_id.read().clone(), b));
+
+    let badge = {
+        let custom_pair = custom_ref.as_ref().map(|(k, b)| (k.as_str(), *b));
+        actions::persona_poh_github(index, custom_pair)
+    };
+    let has_pending = POH_PENDING.read().contains_key(&index);
+    let pinned_github: Vec<_> = viso_core::poh::POH_ISSUERS
+        .iter()
+        .filter(|i| i.provider == "github")
+        .copied()
+        .collect();
+
+    rsx! {
+        div { class: "card",
+            h3 { "Anonymous GitHub PoH" }
+            p { class: "muted",
+                "Prove this persona is backed by a real GitHub account (>= 1 year old) via Blind RSA without revealing your GitHub handle or linking your Viso key."
+            }
+            match badge {
+                Some((b, is_pinned)) => rsx! {
+                    p {
+                        strong { "Verified {b.provider}" }
+                        " · tier: " code { "{b.tier}" }
+                        " · epoch: " code { "{b.epoch}" }
+                        if !is_pinned {
+                            " " span { class: "muted small", "(custom issuer)" }
+                        }
+                    }
+                    button { class: "ghost", disabled: *busy.read(),
+                        onclick: move |_| {
+                            busy.set(true);
+                            err.set(String::new());
+                            spawn(async move {
+                                if let Err(e) = actions::remove_poh_github(index).await { err.set(e); }
+                                busy.set(false);
+                            });
+                        },
+                        "Remove badge"
+                    }
+                },
+                None => rsx! {
+                    if !pinned_github.is_empty() {
+                        label { "Tier / Epoch" }
+                        div { class: "row",
+                            for iss in pinned_github.iter() {
+                                {
+                                    let kid = iss.key_id.to_string();
+                                    let active = *selected_pinned.read() == kid;
+                                    rsx! {
+                                        button {
+                                            class: if active { "primary" } else { "ghost" },
+                                            disabled: *busy.read(),
+                                            onclick: move |_| selected_pinned.set(kid.clone()),
+                                            "{iss.tier} ({iss.epoch})"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    details {
+                        summary { class: "muted small", "Gatekeeper & issuer key settings" }
+                        label { "Gatekeeper URL" }
+                        input {
+                            value: "{gatekeeper_url}",
+                            oninput: move |e| gatekeeper_url.set(e.value()),
+                            placeholder: "https://poh.example.org"
+                        }
+                        if pinned_github.is_empty() {
+                            p { class: "muted small",
+                                "No production issuers pinned in this build yet. Paste your Gatekeeper's key_id and SPKI (base64 from /keys) to test locally:"
+                            }
+                            label { "Issuer key_id" }
+                            input {
+                                value: "{custom_key_id}",
+                                oninput: move |e| custom_key_id.set(e.value()),
+                                placeholder: "github:age1y:2026"
+                            }
+                            label { "Issuer SPKI (base64)" }
+                            textarea {
+                                value: "{custom_spki_b64}",
+                                oninput: move |e| custom_spki_b64.set(e.value()),
+                                placeholder: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A..."
+                            }
+                        }
+                    }
+
+                    div { class: "row",
+                        button { class: "primary", disabled: *busy.read(),
+                            onclick: move |_| {
+                                busy.set(true);
+                                err.set(String::new());
+                                let gk = gatekeeper_url.read().clone();
+                                let sel = selected_pinned.read().clone();
+                                let ck = custom_key_id.read().clone();
+                                let cb = custom_spki_b64.read().clone();
+                                spawn(async move {
+                                    let resolved = if let Some(pinned) = viso_core::poh::find_issuer(viso_core::poh::POH_ISSUERS, &sel) {
+                                        Ok((pinned.key_id.to_string(), pinned.spki_der.to_vec()))
+                                    } else {
+                                        base64::engine::general_purpose::STANDARD
+                                            .decode(cb.trim())
+                                            .map(|der| (ck, der))
+                                            .map_err(|_| "configure or paste a valid issuer SPKI (base64) in settings".to_string())
+                                    };
+                                    match resolved {
+                                        Ok((kid, spki)) => {
+                                            match actions::start_poh_github(index, &gk, &kid, &spki).await {
+                                                Ok(url) => {
+                                                    auth_url.set(url.clone());
+                                                    #[cfg(target_arch = "wasm32")]
+                                                    if let Some(win) = web_sys::window() {
+                                                        let _ = win.open_with_url_and_target(&url, "_blank");
+                                                    }
+                                                }
+                                                Err(e) => err.set(e),
+                                            }
+                                        }
+                                        Err(e) => err.set(e),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            "1. Start GitHub verification"
+                        }
+                        if has_pending {
+                            span { class: "muted small", "blinding secret saved ✓" }
+                        }
+                    }
+
+                    if !auth_url.read().is_empty() {
+                        p { class: "muted small",
+                            "If the popup did not open, open this link in a new tab: "
+                            a { href: "{auth_url}", target: "_blank", rel: "noopener noreferrer", "Authorize with GitHub" }
+                        }
+                    }
+
+                    textarea {
+                        value: "{token_input}",
+                        oninput: move |e| token_input.set(e.value()),
+                        placeholder: "2. Paste VISO-POH-V1:... token here"
+                    }
+                    button {
+                        class: "primary",
+                        disabled: *busy.read() || token_input.read().trim().is_empty(),
+                        onclick: move |_| {
+                            busy.set(true);
+                            err.set(String::new());
+                            let tok = token_input.read().clone();
+                            let ck = custom_key_id.read().clone();
+                            let cb = custom_spki_b64.read().clone();
+                            spawn(async move {
+                                let custom_der = base64::engine::general_purpose::STANDARD
+                                    .decode(cb.trim())
+                                    .ok();
+                                let custom_pair = custom_der.as_deref().map(|b| (ck.as_str(), b));
+                                match actions::attach_poh_github(index, tok, custom_pair).await {
+                                    Ok(()) => {
+                                        token_input.set(String::new());
+                                        auth_url.set(String::new());
+                                    }
+                                    Err(e) => err.set(e),
+                                }
+                                busy.set(false);
+                            });
+                        },
+                        "2. Attach anonymous badge"
                     }
                 },
             }

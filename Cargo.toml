@@ -7,6 +7,7 @@ members = [
     "toolkit/viso-client",
     "ui",
     "demo",
+    "gatekeeper",
 ]
 resolver = "2"
 
@@ -34,6 +35,8 @@ bs58 = "0.5"
 getrandom = { version = "0.2" }
 
 data-encoding = "2"
+base64 = "0.22"
+blind-rsa-signatures = { version = "0.15", default-features = false, features = ["serde"] }
 
 freenet-stdlib = { version = "0.8.5", features = ["contract"] }
 

@@ -8,6 +8,8 @@ pub mod derive;
 #[cfg(feature = "ghostkey")]
 pub mod ghostkey;
 pub mod merge;
+#[cfg(feature = "poh")]
+pub mod poh;
 pub mod resources;
 pub mod state;
 

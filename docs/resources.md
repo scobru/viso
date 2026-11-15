@@ -84,6 +84,20 @@ The identity contract does not inspect this slot (any correctly signed
 slot is valid there), so adding it changed no contract bytes and no
 address.
 
+## Slot: `poh:<provider>` (e.g. `poh:github`)
+
+An **anonymous Proof-of-Personhood attestation** issued via RFC 9474 Blind
+RSA (`RSABSSA-SHA384-PSS-Randomized`). Proves the persona belongs to a
+verified off-chain account (for example a GitHub `User` account at least
+365 days old) without revealing the external account, and without letting the
+issuer link the external account to the persona's public key.
+
+Content is CBOR `PohAttestationV1 { version: 1, key_id: String, msg_randomizer: bytes(32), sig: bytes }`,
+verifying `"viso-poh-v1" ‖ u32le(len(key_id)) ‖ key_id ‖ pubkey(32)`
+against the pinned `POH_ISSUERS` registry in `viso-core`. An unrecognized or
+invalid `poh:*` slot is ignored by `viso-client` (`Identity::poh`), not a
+hard `FetchError`.
+
 ## Lifecycle
 
 - **Tombstoned slot** (empty content, newer timestamp): the resource was

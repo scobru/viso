@@ -396,6 +396,147 @@ pub async fn remove_ghostkey(index: u32) -> Result<(), String> {
     publish_slot(index, viso_core::resources::SLOT_GHOSTKEY, vec![]).await
 }
 
+pub fn poh_pending_key(index: u32) -> String {
+    format!("pohpending:{index}")
+}
+
+/// Verified GitHub Proof-of-Personhood badge for this persona, if published.
+/// Checks pinned production `POH_ISSUERS`, or an optional local/custom SPKI
+/// supplied for testing.
+pub fn persona_poh_github(
+    index: u32,
+    custom_issuer: Option<(&str, &[u8])>,
+) -> Option<(viso_core::poh::PohBadge, bool)> {
+    let pk = identity_pubkey(index)?;
+    let states = IDENTITY_STATES.read();
+    let slot = states
+        .get(&pk.to_bytes())?
+        .as_ref()?
+        .slots
+        .get(viso_core::resources::SLOT_POH_GITHUB)?;
+    if slot.bytes.is_empty() {
+        return None;
+    }
+    if let Ok(badge) = viso_core::poh::verify_attestation(&slot.bytes, &pk.to_bytes()) {
+        return Some((badge, true));
+    }
+    if let Some((key_id, spki_der)) = custom_issuer {
+        let parts: Vec<&str> = key_id.split(':').collect();
+        if parts.len() == 3 {
+            let issuers = [viso_core::poh::PohIssuer {
+                key_id,
+                provider: parts[0],
+                tier: parts[1],
+                epoch: parts[2],
+                spki_der,
+            }];
+            if let Ok(badge) =
+                viso_core::poh::verify_attestation_with(&slot.bytes, &pk.to_bytes(), &issuers)
+            {
+                return Some((badge, false));
+            }
+        }
+    }
+    None
+}
+
+/// Request any pending PoH blinding state for `index` from the node delegate.
+pub async fn load_poh_pending(index: u32) {
+    let _ = api::kv_request(WhoiamDelegateRequest::Get {
+        key: poh_pending_key(index),
+    })
+    .await;
+}
+
+/// Build the blinded PoH OAuth URL for `index`, persist `PendingBlindState`
+/// in `viso-delegate` so the blinding secret survives reloads, and return the URL.
+pub async fn start_poh_github(
+    index: u32,
+    gatekeeper_url: &str,
+    key_id: &str,
+    spki_der: &[u8],
+) -> Result<String, String> {
+    let pk = identity_pubkey(index).ok_or("no identity")?;
+    let parts: Vec<&str> = key_id.trim().split(':').collect();
+    if parts.len() != 3 || parts[0] != "github" {
+        return Err("key_id must have format github:<tier>:<epoch>".into());
+    }
+    let issuer = viso_core::poh::PohIssuer {
+        key_id: key_id.trim(),
+        provider: parts[0],
+        tier: parts[1],
+        epoch: parts[2],
+        spki_der,
+    };
+    let (blinded_b64, pending) =
+        viso_core::poh::blind_request(&mut rand::rngs::OsRng, &issuer, &pk.to_bytes())?;
+    let cbor = viso_core::to_cbor(&pending)?;
+    kv_store_confirmed(&poh_pending_key(index), cbor).await?;
+    POH_PENDING.write().insert(index, pending);
+
+    let base = gatekeeper_url.trim().trim_end_matches('/');
+    if !(base.starts_with("http://") || base.starts_with("https://")) {
+        return Err("gatekeeper URL must start with http:// or https://".into());
+    }
+    Ok(format!(
+        "{base}/github?key_id={}&blinded={blinded_b64}",
+        url_encode(issuer.key_id)
+    ))
+}
+
+/// Unblind a `VISO-POH-V1:` token using the saved `PendingBlindState`, verify
+/// against `POH_ISSUERS` (or `custom_issuer` if provided), publish the
+/// `poh:github` slot, and clear the pending secret from `viso-delegate`.
+pub async fn attach_poh_github(
+    index: u32,
+    token: String,
+    custom_issuer: Option<(&str, &[u8])>,
+) -> Result<(), String> {
+    let pending = POH_PENDING
+        .peek()
+        .get(&index)
+        .cloned()
+        .ok_or_else(|| "no pending verification found — click Start GitHub Verification first".to_string())?;
+    let mut issuers: Vec<viso_core::poh::PohIssuer<'_>> = viso_core::poh::POH_ISSUERS.to_vec();
+    if let Some((key_id, spki_der)) = custom_issuer {
+        let parts: Vec<&str> = key_id.trim().split(':').collect();
+        if parts.len() == 3 {
+            issuers.push(viso_core::poh::PohIssuer {
+                key_id: key_id.trim(),
+                provider: parts[0],
+                tier: parts[1],
+                epoch: parts[2],
+                spki_der,
+            });
+        }
+    }
+    let slot_bytes = viso_core::poh::finalize_attestation(&token, &pending, &issuers)?;
+    publish_slot(index, viso_core::resources::SLOT_POH_GITHUB, slot_bytes).await?;
+    let _ = api::kv_request(WhoiamDelegateRequest::Delete {
+        key: poh_pending_key(index),
+    })
+    .await;
+    POH_PENDING.write().remove(&index);
+    Ok(())
+}
+
+pub async fn remove_poh_github(index: u32) -> Result<(), String> {
+    publish_slot(index, viso_core::resources::SLOT_POH_GITHUB, vec![]).await
+}
+
+fn url_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 /// Hashes per `grind_step` call; calls repeat until GRIND_SLICE_MS passes.
 const GRIND_CHUNK: u64 = 20_000;
 /// Grind this long before yielding to the browser event loop. A time slice
