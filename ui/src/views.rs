@@ -467,8 +467,11 @@ pub fn App() -> Element {
         style { dangerous_inner_html: include_str!("../assets/main.css") }
         header { class: "top",
             button { class: "wordmark", onclick: move |_| *VIEW.write() = View::Home,
-                span { class: "vi", "vi" }
-                span { class: "so", "so" }
+                span { class: "wordmark-icon", dangerous_inner_html: include_str!("../assets/viso-icon.svg") }
+                span { class: "wordmark-text",
+                    span { class: "vi", "vi" }
+                    span { class: "so", "so" }
+                }
             }
             StatusDot {}
         }
