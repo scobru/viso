@@ -1061,6 +1061,64 @@ fn ImportCard() -> Element {
 }
 
 #[component]
+fn PersonaRenameRow(index: u32, entry_label: String, destroyed: bool) -> Element {
+    let mut renaming = use_signal(|| false);
+    let mut new_label = use_signal(String::new);
+    let mut rename_err = use_signal(String::new);
+
+    rsx! {
+        if *renaming.read() {
+            div { class: "row",
+                input {
+                    value: "{new_label}",
+                    placeholder: "persona name (only on this device)",
+                    oninput: move |e| new_label.set(e.value()),
+                }
+                button {
+                    class: "primary",
+                    disabled: new_label.read().trim().is_empty(),
+                    onclick: move |_| {
+                        rename_err.set(String::new());
+                        spawn(async move {
+                            match actions::rename_identity(index, new_label.read().clone()).await {
+                                Ok(()) => renaming.set(false),
+                                Err(e) => rename_err.set(e),
+                            }
+                        });
+                    },
+                    "save"
+                }
+                button { class: "ghost", onclick: move |_| renaming.set(false), "cancel" }
+            }
+            if destroyed {
+                p { class: "muted small",
+                    "Note: destroyed personas are not saved on Freenet; this name is stored locally on your device only."
+                }
+            }
+        } else {
+            div { class: "id-title-row",
+                h2 { "{entry_label}" }
+                if destroyed {
+                    span { class: "destroyed-chip", "Destroyed on Freenet" }
+                }
+                button {
+                    class: "ghost",
+                    onclick: {
+                        let current = entry_label.clone();
+                        move |_| {
+                            new_label.set(current.clone());
+                            renaming.set(true);
+                        }
+                    },
+                    "rename"
+                }
+            }
+        }
+        if !rename_err.read().is_empty() { p { class: "error", "{rename_err}" } }
+    }
+}
+
+#[component]
 fn Detail(index: u32) -> Element {
     let Some(pk) = actions::identity_pubkey(index) else {
         return rsx! { Loading { message: "Deriving key…" } };
@@ -1103,9 +1161,6 @@ fn Detail(index: u32) -> Element {
     let mut confirm = use_signal(String::new);
     let mut destroy_busy = use_signal(|| false);
     let mut destroy_err = use_signal(String::new);
-    let mut renaming = use_signal(|| false);
-    let mut new_label = use_signal(String::new);
-    let mut rename_err = use_signal(String::new);
     // After every hook (Dioxus hook order must not vary between renders):
     // wait for the contract state before showing editable surfaces.
     if !arrived {
@@ -1126,12 +1181,9 @@ fn Detail(index: u32) -> Element {
             section { class: "wrap narrow-wrap",
                 button { class: "ghost back", onclick: move |_| *VIEW.write() = View::Home, "← all personas" }
                 div { class: "card",
-                    div { class: "id-title-row",
-                        h3 { "{entry_label}" }
-                        span { class: "destroyed-chip", "Destroyed on Freenet" }
-                    }
+                    PersonaRenameRow { index, entry_label: entry_label.clone(), destroyed: true }
                     p { class: "muted",
-                        "This persona's Viso contract on Freenet carries a permanent destruction marker, so its public profile slots and GitHub PoH badge can no longer be published or updated on Viso."
+                        "This persona's Viso contract on Freenet carries a permanent destruction marker, so its public profile slots and GitHub PoH badge can no longer be published or updated on Viso. Renaming it above changes only the local label on this device — destroyed personas are not saved on Freenet."
                     }
                     p { class: "muted small",
                         "Your Ed25519 signing key itself is NOT lost. Keep this persona on your device to continue signing in to external apps (such as Radica) via \"Sign in with Viso\", or export your private key below. Do NOT click \"Remove from this device\" or \"Restore as new persona\" if you want to keep using this key."
@@ -1201,45 +1253,8 @@ fn Detail(index: u32) -> Element {
                         None => rsx! { span { class: "avatar lg", style: identicon_style(&pkb) } },
                     }
                     div { class: "id-title",
-                        if *renaming.read() {
-                            div { class: "row",
-                                input {
-                                    value: "{new_label}",
-                                    placeholder: "persona name (only on this device)",
-                                    oninput: move |e| new_label.set(e.value()),
-                                }
-                                button { class: "primary",
-                                    disabled: new_label.read().trim().is_empty(),
-                                    onclick: move |_| {
-                                        rename_err.set(String::new());
-                                        spawn(async move {
-                                            match actions::rename_identity(index, new_label.read().clone()).await {
-                                                Ok(()) => renaming.set(false),
-                                                Err(e) => rename_err.set(e),
-                                            }
-                                        });
-                                    },
-                                    "save"
-                                }
-                                button { class: "ghost", onclick: move |_| renaming.set(false), "cancel" }
-                            }
-                        } else {
-                            div { class: "row",
-                                h2 { "{entry_label}" }
-                                button { class: "ghost",
-                                    onclick: {
-                                        let current = entry_label.clone();
-                                        move |_| {
-                                            new_label.set(current.clone());
-                                            renaming.set(true);
-                                        }
-                                    },
-                                    "rename"
-                                }
-                            }
-                        }
+                        PersonaRenameRow { index, entry_label: entry_label.clone(), destroyed: false }
                         code { class: "muted small", "{short_key(&pkb)}" }
-                        if !rename_err.read().is_empty() { p { class: "error", "{rename_err}" } }
                     }
                 }
                 p { class: "muted", "Profile picture — auto-cropped square, published as PNG:" }
