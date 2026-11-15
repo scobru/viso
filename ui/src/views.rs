@@ -1106,9 +1106,6 @@ fn Detail(index: u32) -> Element {
     let mut renaming = use_signal(|| false);
     let mut new_label = use_signal(String::new);
     let mut rename_err = use_signal(String::new);
-    let mut sk_revealed = use_signal(|| None::<(String, String)>);
-    let mut sk_err = use_signal(String::new);
-
     // After every hook (Dioxus hook order must not vary between renders):
     // wait for the contract state before showing editable surfaces.
     if !arrived {
@@ -1134,10 +1131,10 @@ fn Detail(index: u32) -> Element {
                         span { class: "destroyed-chip", "Destroyed on Freenet" }
                     }
                     p { class: "muted",
-                        "This persona's contract on Freenet carries a permanent destruction marker, so it can no longer be updated or linked to a GitHub PoH badge."
+                        "This persona's Viso contract on Freenet carries a permanent destruction marker, so its public profile slots and GitHub PoH badge can no longer be published or updated on Viso."
                     }
                     p { class: "muted small",
-                        "Contract: " code { "{contract_id}" }
+                        "Your Ed25519 signing key itself is NOT lost. Keep this persona on your device to continue signing in to external apps (such as Radica) via \"Sign in with Viso\", or export your private key below. Do NOT click \"Remove from this device\" or \"Restore as new persona\" if you want to keep using this key."
                     }
                     div { class: "row",
                         button {
@@ -1176,6 +1173,8 @@ fn Detail(index: u32) -> Element {
                     }
                     if !destroy_err.read().is_empty() { p { class: "error", "{destroy_err}" } }
                 }
+
+                PersonaKeyCards { index, addr, contract_id }
             }
         };
     }
@@ -1353,66 +1352,7 @@ fn Detail(index: u32) -> Element {
             PersonaGhostkey { index }
             PersonaPoh { index }
 
-            div { class: "card",
-                h3 { "Share with apps" }
-                p { class: "muted", "Apps fetch this persona with your public key (they derive the contract from it):" }
-                label { "Public key" }
-                div { class: "keyrow" ,
-                    code { "{addr}" }
-                    CopyButton { text: addr.clone(), label: "copy".to_string() }
-                }
-                label { "Contract" }
-                div { class: "keyrow",
-                    code { "{contract_id}" }
-                    CopyButton { text: contract_id.clone(), label: "copy".to_string() }
-                }
-            }
-
-            details { class: "card",
-                summary { h3 { "Export private key" } }
-                p { class: "muted",
-                    "The raw Ed25519 secret key for this persona. Use this if you need to import this persona manually into an external app or tool without using Viso."
-                }
-                p { class: "muted small",
-                    "Anyone holding this key can sign on behalf of this persona. Keep it safe and never share it publicly."
-                }
-                match sk_revealed.read().clone() {
-                    None => rsx! {
-                        div { class: "row",
-                            button { class: "ghost",
-                                onclick: move |_| {
-                                    sk_err.set(String::new());
-                                    match actions::persona_secret_bytes(index) {
-                                        Ok(bytes) => {
-                                            let hex_key = data_encoding::HEXLOWER.encode(&bytes);
-                                            let bs58_key = bs58::encode(&bytes).into_string();
-                                            sk_revealed.set(Some((hex_key, bs58_key)));
-                                        }
-                                        Err(e) => sk_err.set(e),
-                                    }
-                                },
-                                "Reveal private key"
-                            }
-                        }
-                    },
-                    Some((hex_key, bs58_key)) => rsx! {
-                        label { "Private key (hex - 64 characters)" }
-                        div { class: "keyrow",
-                            code { "{hex_key}" }
-                            CopyButton { text: hex_key.clone(), label: "copy hex".to_string() }
-                        }
-                        label { "Private key (base58)" }
-                        div { class: "keyrow",
-                            code { "{bs58_key}" }
-                            CopyButton { text: bs58_key.clone(), label: "copy base58".to_string() }
-                        }
-                        div { class: "row",
-                            button { class: "ghost", onclick: move |_| sk_revealed.set(None), "hide" }
-                        }
-                    },
-                }
-                if !sk_err.read().is_empty() { p { class: "error", "{sk_err}" } }
-            }
+            PersonaKeyCards { index, addr, contract_id }
 
             details { class: "card danger",
                 summary { h3 { "Danger zone" } }
@@ -1441,6 +1381,76 @@ fn Detail(index: u32) -> Element {
                 }
                 if !destroy_err.read().is_empty() { p { class: "error", "{destroy_err}" } }
             }
+        }
+    }
+}
+
+/// Public key, contract ID, and optional private key reveal/export cards for a persona.
+#[component]
+fn PersonaKeyCards(index: u32, addr: String, contract_id: String) -> Element {
+    let mut sk_revealed = use_signal(|| None::<(String, String)>);
+    let mut sk_err = use_signal(String::new);
+
+    rsx! {
+        div { class: "card",
+            h3 { "Share with apps" }
+            p { class: "muted", "Apps fetch this persona with your public key (they derive the contract from it):" }
+            label { "Public key" }
+            div { class: "keyrow",
+                code { "{addr}" }
+                CopyButton { text: addr.clone(), label: "copy".to_string() }
+            }
+            label { "Contract" }
+            div { class: "keyrow",
+                code { "{contract_id}" }
+                CopyButton { text: contract_id.clone(), label: "copy".to_string() }
+            }
+        }
+
+        details { class: "card",
+            summary { h3 { "Export private key" } }
+            p { class: "muted",
+                "The raw Ed25519 secret key for this persona. Use this if you need to import this persona manually into an external app or tool without using Viso."
+            }
+            p { class: "muted small",
+                "Anyone holding this key can sign on behalf of this persona. Keep it safe and never share it publicly."
+            }
+            match sk_revealed.read().clone() {
+                None => rsx! {
+                    div { class: "row",
+                        button { class: "ghost",
+                            onclick: move |_| {
+                                sk_err.set(String::new());
+                                match actions::persona_secret_bytes(index) {
+                                    Ok(bytes) => {
+                                        let hex_key = data_encoding::HEXLOWER.encode(&bytes);
+                                        let bs58_key = bs58::encode(&bytes).into_string();
+                                        sk_revealed.set(Some((hex_key, bs58_key)));
+                                    }
+                                    Err(e) => sk_err.set(e),
+                                }
+                            },
+                            "Reveal private key"
+                        }
+                    }
+                },
+                Some((hex_key, bs58_key)) => rsx! {
+                    label { "Private key (hex - 64 characters)" }
+                    div { class: "keyrow",
+                        code { "{hex_key}" }
+                        CopyButton { text: hex_key.clone(), label: "copy hex".to_string() }
+                    }
+                    label { "Private key (base58)" }
+                    div { class: "keyrow",
+                        code { "{bs58_key}" }
+                        CopyButton { text: bs58_key.clone(), label: "copy base58".to_string() }
+                    }
+                    div { class: "row",
+                        button { class: "ghost", onclick: move |_| sk_revealed.set(None), "hide" }
+                    }
+                },
+            }
+            if !sk_err.read().is_empty() { p { class: "error", "{sk_err}" } }
         }
     }
 }
