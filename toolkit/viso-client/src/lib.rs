@@ -70,6 +70,19 @@ pub struct Identity {
     pub raw_slots: BTreeMap<String, Vec<u8>>,
 }
 
+impl Identity {
+    /// Returns the first verified PoH badge for `provider` (e.g. `"github"`), if any.
+    pub fn poh_badge(&self, provider: &str) -> Option<&viso_core::poh::PohBadge> {
+        self.poh.iter().find(|b| b.provider == provider)
+    }
+
+    /// Returns `true` if this persona holds a verified PoH badge for `provider`
+    /// (e.g. `"github"`).
+    pub fn has_poh(&self, provider: &str) -> bool {
+        self.poh_badge(provider).is_some()
+    }
+}
+
 pub fn identity_params(pk: &VerifyingKey) -> IdentityParamsV1 {
     IdentityParamsV1 {
         version: 1,
@@ -353,6 +366,25 @@ mod tests {
         );
         let id = identity_from_state(&pk, &state).unwrap();
         assert!(id.poh.is_empty());
+        assert!(!id.has_poh("github"));
+        assert!(id.poh_badge("github").is_none());
         assert!(id.raw_slots.contains_key(viso_core::resources::SLOT_POH_GITHUB));
+    }
+
+    #[test]
+    fn poh_helpers_match_verified_badge() {
+        let sk = key();
+        let pk = sk.verifying_key();
+        let mut id = identity_from_state(&pk, &IdentityStateV1::default()).unwrap();
+        assert!(!id.has_poh("github"));
+        id.poh.push(viso_core::poh::PohBadge {
+            provider: "github".into(),
+            tier: "age1y".into(),
+            epoch: "2026".into(),
+            key_id: "github:age1y:2026".into(),
+        });
+        assert!(id.has_poh("github"));
+        assert_eq!(id.poh_badge("github").unwrap().tier, "age1y");
+        assert!(!id.has_poh("discord"));
     }
 }

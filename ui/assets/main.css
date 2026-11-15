@@ -290,8 +290,212 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ---- GitHub PoH card & badges ---- */
+
+.id-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.poh-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent);
+}
+
+.poh-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.poh-head-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.poh-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: #24292f;
+  color: #ffffff;
+  border: 1px solid rgba(240, 246, 252, 0.16);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.poh-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.poh-title h3 {
+  margin: 0;
+}
+
+.poh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: var(--muted);
+  background: var(--bg-soft);
+  border: 1px solid var(--card-border);
+}
+
+.poh-pill-ok {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+
+.poh-verified {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--ok) 8%, var(--bg-soft));
+  border: 1px solid color-mix(in srgb, var(--ok) 32%, var(--card-border));
+}
+
+.poh-verified-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+}
+
+.poh-verified-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.poh-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.poh-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--card-border);
+  color: var(--text);
+}
+
+.poh-step {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  border: 1px solid var(--card-border);
+}
+
+.poh-step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.poh-step-num {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--accent-a) 22%, transparent);
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--accent-a) 45%, transparent);
+  flex-shrink: 0;
+}
+
+.github-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 9px 16px;
+  border-radius: var(--radius);
+  background: #24292f;
+  color: #ffffff;
+  border: 1px solid rgba(240, 246, 252, 0.22);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.github-btn:hover:not(:disabled) {
+  background: #2f363d;
+  border-color: rgba(240, 246, 252, 0.42);
+}
+
+.github-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.github-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.poh-settings {
+  margin: 2px 0;
+}
+
+.poh-settings summary {
+  cursor: pointer;
+  user-select: none;
+}
+
 @media (max-width: 560px) {
   main { padding: 12px 14px 40px; }
   .backup { flex-direction: column; align-items: stretch; }
+  .poh-head { flex-wrap: wrap; }
 }
 

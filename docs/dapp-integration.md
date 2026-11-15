@@ -3,8 +3,9 @@
 This guide explains how to integrate **Viso** into your Freenet application:
 1. **Connect Flow ("Sign in with Viso")**: Authenticate users without passwords or centralized servers.
 2. **Reading Persona Data**: Retrieve public profiles (`name`, `bio`) and avatars.
-3. **Anti-Spam & Sybil Resistance**: Verify the persona's proof-of-commitment level (`ante` slot).
+3. **Anti-Spam & Sybil Resistance**: Verify the persona's proof-of-commitment level (`ante` slot) and anonymous Proof-of-Personhood (`poh:github` slot).
 4. **Writing as a persona**: let one sign-in authorize an app key that signs your contract writes.
+5. **Policy Gating with GitHub PoH (`poh:github`)**: Require a verified GitHub account (via Blind RSA, zero linkability) in Rust or TypeScript.
 
 Ready-to-use implementations are provided for both **TypeScript / JavaScript** (for web dApps) and **Rust** (for backend/native nodes).
 
@@ -297,3 +298,144 @@ Users without Viso can create a key in your app: the app signs the very same cer
 - **Viso's screen says "sign in to <origin>"**, not "authorize this key". Tell users in your app what signing in allows.
 - **One app key per node.** A new node is a new sign-in; the persona, not the key, owns the data. If the app key changes, ask the user to sign in again.
 - **Keep anonymous keys apart.** Certificates are public: never reuse the delegated app key for actions that must not be linked to the persona (FreePolls keeps respondents' keys separate).
+
+---
+
+## 6. Requiring Anonymous GitHub Proof-of-Personhood (`poh:github`)
+
+If your dApp wants to enforce a **unique/real human policy** (for example, requiring users to hold a verified GitHub account `>= 1 year old` to post, vote, claim an allocation, or bypass proof-of-work fees), you can require the persona's `poh:github` slot.
+
+Because attestations use **RFC 9474 Blind RSA (`RSABSSA-SHA384-PSS-Randomized`)**:
+- Your app learns **only** that the persona holds a valid signature from a trusted Gatekeeper issuer (`provider = "github"`, `tier = "age1y"`, `epoch = "2026"`).
+- Your app **never** learns the user's GitHub username or ID, and the Gatekeeper **never** learns which Viso public key received the badge.
+
+### Step 1: Identify the user with Sign-in with Viso
+
+Use the normal Connect Flow (Section 2) to obtain and verify the persona's Ed25519 public key `pk`.
+
+### Step 2: Fetch and enforce the `poh:github` policy
+
+#### Option A: Rust (`viso-client`)
+
+`viso_client::fetch` automatically verifies every `poh:*` slot signature and Blind-RSA proof against `viso_core::poh::POH_ISSUERS`, populating `identity.poh` (invalid or unrecognized slots are ignored):
+
+```rust
+use viso_client::{fetch, parse_pubkey};
+
+let pk = parse_pubkey(&persona_pk_hex)?;
+let identity = fetch(
+    "ws://127.0.0.1:7509/v1/contract/command?encodingProtocol=native",
+    &pk,
+).await?;
+
+// Simple policy: require any verified GitHub PoH badge
+if !identity.has_poh("github") {
+    return Err("This action requires a verified GitHub PoH badge in Viso".into());
+}
+
+// Strict policy: inspect tier / epoch
+let valid_tier = identity
+    .poh_badge("github")
+    .is_some_and(|b| b.tier == "age1y" && b.epoch == "2026");
+```
+
+#### Option B: Browser / TypeScript (WebCrypto `RSA-PSS` + `SHA-384`)
+
+In a web dApp you can verify `poh:github` with zero RSA libraries using the browser's built-in `crypto.subtle`:
+
+1. Fetch the persona's identity contract state (`Get` on `visoIdentityInstance(pkHex)`), check that `destroyed` is unset, and verify the `poh:github` slot's Ed25519 signature by `pk` (see `common/src/state.rs`).
+2. Decode the slot bytes as CBOR `PohAttestationV1 { version: 1, key_id, msg_randomizer, sig }`.
+3. Look up `key_id` in your pinned issuer registry (synced from your Gatekeeper's `GET /keys`, or synced via `scripts/sync-poh-issuers.ps1`).
+4. Verify the Blind-RSA signature over `msg_randomizer || "viso-poh-v1" || u32le(len(key_id)) || key_id || pk_bytes`:
+
+```typescript
+const enc = new TextEncoder();
+
+export interface PohIssuer {
+  keyId: string;
+  provider: string;
+  tier: string;
+  epoch: string;
+  spkiDerHex: string; // RSA SubjectPublicKeyInfo DER (hex), from Gatekeeper /keys
+}
+
+export interface PohBadge {
+  provider: string;
+  tier: string;
+  epoch: string;
+  keyId: string;
+}
+
+function unhex(h: string): Uint8Array {
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const p of parts) {
+    out.set(p, offset);
+    offset += p.length;
+  }
+  return out;
+}
+
+export function pohMessage(keyId: string, pkBytes: Uint8Array): Uint8Array {
+  const kb = enc.encode(keyId);
+  const len = new Uint8Array(new Uint32Array([kb.length]).buffer);
+  return concatBytes(enc.encode("viso-poh-v1"), len, kb, pkBytes);
+}
+
+export async function verifyPohAttestation(
+  att: { version: number; key_id: string; msg_randomizer: Uint8Array; sig: Uint8Array },
+  pkBytes: Uint8Array,
+  issuers: readonly PohIssuer[],
+): Promise<PohBadge | null> {
+  if (att.version !== 1 || att.msg_randomizer.length !== 32 || !att.sig.length) {
+    return null;
+  }
+  const issuer = issuers.find((i) => i.keyId === att.key_id);
+  if (!issuer) return null;
+
+  const key = await crypto.subtle.importKey(
+    "spki",
+    unhex(issuer.spkiDerHex),
+    { name: "RSA-PSS", hash: "SHA-384" },
+    false,
+    ["verify"],
+  );
+
+  // RFC 9474 RSABSSA-SHA384-PSS-Randomized prepends msg_randomizer and uses 48-byte PSS salt
+  const input = concatBytes(att.msg_randomizer, pohMessage(att.key_id, pkBytes));
+  const ok = await crypto.subtle.verify(
+    { name: "RSA-PSS", saltLength: 48 },
+    key,
+    att.sig,
+    input,
+  );
+
+  return ok
+    ? { provider: issuer.provider, tier: issuer.tier, epoch: issuer.epoch, keyId: issuer.keyId }
+    : null;
+}
+
+// Example policy helper:
+export function requiresGithubPoh(badges: PohBadge[]): boolean {
+  return badges.some((b) => b.provider === "github" && b.tier === "age1y");
+}
+```
+
+### Keeping Issuer Keys in Sync
+
+Use `scripts/sync-poh-issuers.ps1` to pull active public keys from a running Gatekeeper (`/keys`) and update `common/src/poh.rs` (`POH_ISSUERS`) automatically:
+
+```powershell
+.\scripts\sync-poh-issuers.ps1 -FromUrl https://viso-poh.scobrudot.dev
+```
+
+If you reject an unverified user in your app UI, prompt them to open Viso, select their persona, and complete **"Anonymous GitHub PoH → Connect with GitHub"** — once attached, your app sees the `poh:github` slot on the next persona fetch without requiring a new login.
