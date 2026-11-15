@@ -22,8 +22,7 @@ everywhere.
   link the GitHub account to the Viso public key.
 - The **delegate** is an origin-isolated secret store on your node
   holding the seed; all key derivation and signing happen in the UI.
-- **Destroying** a persona publishes a signed permanent marker first,
-  then forgets the local keys.
+- **Destroying & Delegating** a persona: destroying publishes a signed permanent marker so public slots on Freenet can no longer be updated, while keeping the Ed25519 key available on your device (`Share with apps`, `Export private key`, local-only label renaming, and `"Sign in with Viso"`). Any persona — including a destroyed one — can issue a dual-signed **`DelegationProofV1`** certificate handing off mutable identity slots (e.g., `profile`, `avatar`, `poh:github`) to an active persona for a specific app (`radica`) or globally (`*`). See Section 7 of [docs/dapp-integration.md](docs/dapp-integration.md).
 
 ## Workspace
 
