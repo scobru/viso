@@ -23,6 +23,7 @@ everywhere.
 - The **delegate** is an origin-isolated secret store on your node
   holding the seed; all key derivation and signing happen in the UI.
 - **Destroying & Delegating** a persona: destroying publishes a signed permanent marker so public slots on Freenet can no longer be updated, while keeping the Ed25519 key available on your device (`Share with apps`, `Export private key`, local-only label renaming, and `"Sign in with Viso"`). Any persona — including a destroyed one — can issue a dual-signed **`DelegationProofV1`** certificate handing off mutable identity slots (e.g., `profile`, `avatar`, `poh:github`) to an active persona for a specific app (`radica`) or globally (`*`). See Section 7 of [docs/dapp-integration.md](docs/dapp-integration.md).
+- **Hiding a persona** from the grid (live or destroyed) is a local-only toggle on its detail page — it never touches Freenet state, badges or the key itself, just this device's view.
 
 ## Workspace
 
