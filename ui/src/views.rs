@@ -2100,6 +2100,8 @@ fn PersonaPohCard(index: u32, provider: &'static str) -> Element {
                                         spawn(async move {
                                             let resolved = if let Some(pinned) = viso_core::poh::find_issuer(viso_core::poh::POH_ISSUERS, &sel) {
                                                 Ok((pinned.key_id.to_string(), pinned.spki_der.to_vec()))
+                                            } else if cb.trim().is_empty() {
+                                                Err("configure or paste a valid issuer SPKI (base64) in settings".to_string())
                                             } else {
                                                 base64::engine::general_purpose::STANDARD
                                                     .decode(cb.trim())
