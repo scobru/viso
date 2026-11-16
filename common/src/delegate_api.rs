@@ -56,6 +56,11 @@ impl IdentityMeta {
 pub struct IdentityEntry {
     pub index: u32,
     pub label: String,
+    /// Locally hidden from the persona grid (e.g. an old/unused persona the
+    /// user wants out of the way without destroying it). Freenet state and
+    /// badges are untouched; this only affects this device's list view.
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 #[cfg(test)]
@@ -79,6 +84,7 @@ mod tests {
             identities: vec![IdentityEntry {
                 index: 0,
                 label: "main".into(),
+                hidden: false,
             }],
             next_index: 1,
         };
@@ -93,9 +99,9 @@ mod tests {
     fn alloc_never_reuses_destroyed_index() {
         let mut meta = IdentityMeta::default();
         assert_eq!(meta.alloc_index(), 0);
-        meta.identities.push(IdentityEntry { index: 0, label: "a".into() });
+        meta.identities.push(IdentityEntry { index: 0, label: "a".into(), hidden: false });
         meta.next_index = 1;
-        meta.identities.push(IdentityEntry { index: 1, label: "b".into() });
+        meta.identities.push(IdentityEntry { index: 1, label: "b".into(), hidden: false });
         meta.next_index = 2;
         // Destroy the highest-index identity.
         meta.identities.retain(|e| e.index != 1);
@@ -112,11 +118,26 @@ mod tests {
             identities: Vec<IdentityEntry>,
         }
         let old = OldMeta {
-            identities: vec![IdentityEntry { index: 3, label: "x".into() }],
+            identities: vec![IdentityEntry { index: 3, label: "x".into(), hidden: false }],
         };
         let bytes = crate::to_cbor(&old).unwrap();
         let meta: IdentityMeta = crate::from_cbor(&bytes).unwrap();
         assert_eq!(meta.next_index, 0);
         assert_eq!(meta.alloc_index(), 4);
+    }
+
+    /// Entries stored before `hidden` existed must still decode (defaults
+    /// to visible), the same way `pre_next_index_meta_decodes` covers
+    /// `next_index`.
+    #[test]
+    fn pre_hidden_entry_decodes() {
+        #[derive(serde::Serialize)]
+        struct OldEntry {
+            index: u32,
+            label: String,
+        }
+        let bytes = crate::to_cbor(&OldEntry { index: 5, label: "old".into() }).unwrap();
+        let entry: IdentityEntry = crate::from_cbor(&bytes).unwrap();
+        assert!(!entry.hidden);
     }
 }
