@@ -353,6 +353,10 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   border: 1px solid color-mix(in srgb, #facc15 40%, transparent);
 }
 
+.id-card.dimmed {
+  opacity: 0.55;
+}
+
 .destroyed-chip {
   display: inline-flex;
   align-items: center;

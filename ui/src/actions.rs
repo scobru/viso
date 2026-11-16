@@ -219,6 +219,7 @@ pub async fn restore_seed_opts(input: String, ensure_index_zero: bool) -> Result
                     meta.identities.push(IdentityEntry {
                         index,
                         label: format!("persona {index}"),
+                        hidden: false,
                     });
                 }
                 // Destroyed identities stay out of the list but still push
@@ -245,6 +246,7 @@ pub async fn restore_seed_opts(input: String, ensure_index_zero: bool) -> Result
             meta.identities.push(IdentityEntry {
                 index: 0,
                 label: "persona 0".into(),
+                hidden: false,
             });
             meta.identities.sort_by_key(|e| e.index);
             meta.next_index = meta.next_index.max(1);
@@ -258,6 +260,7 @@ pub async fn restore_seed_opts(input: String, ensure_index_zero: bool) -> Result
             meta.identities.push(IdentityEntry {
                 index: fresh_index,
                 label: format!("persona {fresh_index}"),
+                hidden: false,
             });
             meta.identities.sort_by_key(|e| e.index);
             meta.next_index = meta.next_index.max(fresh_index + 1);
@@ -277,6 +280,21 @@ pub fn is_persona_destroyed(index: u32) -> bool {
         .get(&pk.to_bytes())
         .and_then(|e| e.as_ref())
         .is_some_and(|s| s.destroyed.is_some())
+}
+
+/// Returns `true` if this persona is locally hidden from the grid.
+pub fn is_persona_hidden(index: u32) -> bool {
+    META.read().identities.iter().any(|e| e.index == index && e.hidden)
+}
+
+/// Hide or unhide a persona on this device only — Freenet state is untouched.
+pub async fn set_persona_hidden(index: u32, hidden: bool) -> Result<(), String> {
+    let mut meta = META.read().clone();
+    let Some(entry) = meta.identities.iter_mut().find(|e| e.index == index) else {
+        return Err(format!("no local persona at index {index}"));
+    };
+    entry.hidden = hidden;
+    store_meta(&meta).await
 }
 
 /// Remove a destroyed (unusable) persona and its temporary PoH secrets from this
@@ -320,6 +338,7 @@ pub async fn readd_index(index: u32) -> Result<(), String> {
     meta.identities.push(IdentityEntry {
         index,
         label: format!("persona {index}"),
+        hidden: false,
     });
     meta.identities.sort_by_key(|e| e.index);
     meta.next_index = meta.next_index.max(index + 1);
@@ -345,7 +364,7 @@ pub async fn create_identity(label: String) -> Result<u32, String> {
     } else {
         label.trim().to_string()
     };
-    meta.identities.push(IdentityEntry { index, label });
+    meta.identities.push(IdentityEntry { index, label, hidden: false });
     meta.next_index = index + 1;
     store_meta(&meta).await?;
     Ok(index)

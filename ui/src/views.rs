@@ -603,7 +603,14 @@ fn Home() -> Element {
     let mut new_label = use_signal(String::new);
     let mut busy = use_signal(|| false);
     let mut error = use_signal(String::new);
+    let mut show_hidden = use_signal(|| false);
     let entries = META.read().identities.clone();
+    let hidden_count = entries.iter().filter(|e| e.hidden).count();
+    let visible: Vec<_> = entries
+        .iter()
+        .filter(|e| *show_hidden.read() || !e.hidden)
+        .cloned()
+        .collect();
 
     rsx! {
         section { class: "wrap",
@@ -613,9 +620,19 @@ fn Home() -> Element {
                     p { class: "muted", "Create your first persona — a public page other Freenet apps can read your avatar and profile from. You can make more than one; they're not linkable to each other." }
                 }
             }
+            if hidden_count > 0 {
+                button {
+                    class: "ghost small",
+                    onclick: move |_| {
+                        let next = !*show_hidden.read();
+                        show_hidden.set(next);
+                    },
+                    if *show_hidden.read() { "Hide the {hidden_count} hidden persona(s) again" } else { "Show {hidden_count} hidden persona(s)" }
+                }
+            }
             div { class: "grid",
-                for entry in entries {
-                    IdentityCard { index: entry.index, label: entry.label.clone() }
+                for entry in visible {
+                    IdentityCard { index: entry.index, label: entry.label.clone(), hidden: entry.hidden }
                 }
                 div { class: "card new-card",
                     h3 { "New persona" }
@@ -852,7 +869,7 @@ fn AnteTierChip(bits: u32) -> Element {
 }
 
 #[component]
-fn IdentityCard(index: u32, label: String) -> Element {
+fn IdentityCard(index: u32, label: String, #[props(default = false)] hidden: bool) -> Element {
     let Some(pk) = actions::identity_pubkey(index) else {
         return rsx! {};
     };
@@ -869,9 +886,10 @@ fn IdentityCard(index: u32, label: String) -> Element {
     let github_verified = !is_destroyed && actions::persona_poh(index, "github", None).is_some();
     let google_verified = !is_destroyed && actions::persona_poh(index, "google", None).is_some();
     let ante_bits = if is_destroyed { None } else { actions::persona_level(index) };
+    let card_cls = if hidden { "card id-card dimmed" } else { "card id-card" };
 
     rsx! {
-        button { class: "card id-card", onclick: move |_| *VIEW.write() = View::Identity(index),
+        button { class: "{card_cls}", onclick: move |_| *VIEW.write() = View::Identity(index),
             div { class: "id-head",
                 match avatar {
                     Some(bytes) => rsx! { img { class: "avatar", src: avatar_data_url(&bytes), alt: "" } },
@@ -880,6 +898,9 @@ fn IdentityCard(index: u32, label: String) -> Element {
                 div {
                     div { class: "id-title-row",
                         h3 { "{display}" }
+                        if hidden {
+                            span { class: "destroyed-chip", title: "Hidden from the grid on this device", "Hidden" }
+                        }
                         if is_destroyed {
                             span { class: "destroyed-chip", title: "Permanently destroyed on Freenet", "Destroyed" }
                         } else {
@@ -1229,6 +1250,8 @@ fn Detail(index: u32) -> Element {
     let mut confirm = use_signal(String::new);
     let mut destroy_busy = use_signal(|| false);
     let mut destroy_err = use_signal(String::new);
+    let mut hide_busy = use_signal(|| false);
+    let mut hide_err = use_signal(String::new);
     // After every hook (Dioxus hook order must not vary between renders):
     // wait for the contract state before showing editable surfaces.
     if !arrived {
@@ -1328,6 +1351,28 @@ fn Detail(index: u32) -> Element {
                                 AnteTierChip { bits: b }
                             }
                         }
+                        {
+                            let is_hidden = actions::is_persona_hidden(index);
+                            rsx! {
+                                button {
+                                    class: "ghost small",
+                                    disabled: *hide_busy.read(),
+                                    title: "Only affects this device — the persona stays on Freenet either way.",
+                                    onclick: move |_| {
+                                        hide_busy.set(true);
+                                        hide_err.set(String::new());
+                                        spawn(async move {
+                                            if let Err(e) = actions::set_persona_hidden(index, !is_hidden).await {
+                                                hide_err.set(e);
+                                            }
+                                            hide_busy.set(false);
+                                        });
+                                    },
+                                    if is_hidden { "Unhide from the persona list" } else { "Hide from the persona list" }
+                                }
+                            }
+                        }
+                        if !hide_err.read().is_empty() { p { class: "error", "{hide_err}" } }
                     }
                 }
                 p { class: "muted", "Profile picture — auto-cropped square, published as PNG:" }
