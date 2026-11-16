@@ -1279,6 +1279,28 @@ fn Detail(index: u32) -> Element {
                     p { class: "muted small",
                         "Your Ed25519 signing key itself is NOT lost. Keep this persona on your device to continue signing in to external apps (such as Radica) via \"Sign in with Viso\", or export your private key below. Do NOT click \"Remove from this device\" or \"Restore as new persona\" if you want to keep using this key."
                     }
+                    {
+                        let is_hidden = actions::is_persona_hidden(index);
+                        rsx! {
+                            button {
+                                class: "ghost small",
+                                disabled: *hide_busy.read(),
+                                title: "Only affects this device — the persona stays destroyed on Freenet either way.",
+                                onclick: move |_| {
+                                    hide_busy.set(true);
+                                    hide_err.set(String::new());
+                                    spawn(async move {
+                                        if let Err(e) = actions::set_persona_hidden(index, !is_hidden).await {
+                                            hide_err.set(e);
+                                        }
+                                        hide_busy.set(false);
+                                    });
+                                },
+                                if is_hidden { "Unhide from the persona list" } else { "Hide from the persona list" }
+                            }
+                        }
+                    }
+                    if !hide_err.read().is_empty() { p { class: "error", "{hide_err}" } }
                     div { class: "row",
                         button {
                             class: "primary",
