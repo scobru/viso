@@ -32,6 +32,14 @@ pub struct GitHubUser {
     pub public_repos: u64,
 }
 
+/// Subset of `GET https://openidconnect.googleapis.com/v1/userinfo` used for eligibility + nullifier.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GoogleUser {
+    pub sub: String,
+    #[serde(default)]
+    pub email_verified: Option<bool>,
+}
+
 /// Configuration for one `(provider, tier, epoch)` issuer keypair.
 #[derive(Clone)]
 pub struct ConfiguredIssuer {
@@ -190,17 +198,27 @@ pub fn now_unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Deterministic, non-reversible nullifier scoped to `(provider, epoch, github_id)`.
-/// Deliberately excludes `tier` so one GitHub account can mint at most one Viso
-/// attestation per epoch across all tiers.
+/// Deterministic, non-reversible nullifier scoped to `(provider, epoch, account_id)`.
+/// Deliberately excludes `tier` so one external account can mint at most one Viso
+/// attestation per epoch across all tiers of a provider.
+pub fn compute_nullifier_id(
+    hmac_secret: &[u8],
+    provider: &str,
+    epoch: &str,
+    account_id: &str,
+) -> [u8; 32] {
+    let msg = format!("viso-poh-nullifier-v1|{provider}|{epoch}|{account_id}");
+    hmac_sha256::HMAC::mac(msg.as_bytes(), hmac_secret)
+}
+
+/// Convenience wrapper for numeric GitHub user IDs (identical preimage to [`compute_nullifier_id`]).
 pub fn compute_nullifier(
     hmac_secret: &[u8],
     provider: &str,
     epoch: &str,
     github_id: u64,
 ) -> [u8; 32] {
-    let msg = format!("viso-poh-nullifier-v1|{provider}|{epoch}|{github_id}");
-    hmac_sha256::HMAC::mac(msg.as_bytes(), hmac_secret)
+    compute_nullifier_id(hmac_secret, provider, epoch, &github_id.to_string())
 }
 
 pub fn check_github_eligibility(
@@ -235,6 +253,18 @@ pub fn check_github_eligibility(
     Ok(())
 }
 
+pub fn check_google_eligibility(user: &GoogleUser) -> Result<(), IssueError> {
+    if user.sub.trim().is_empty() {
+        return Err(IssueError::Internal("missing subject id from Google userinfo".into()));
+    }
+    if user.email_verified != Some(true) {
+        return Err(IssueError::Ineligible(
+            "Google account must have a verified email address.".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Decode a base64url-encoded blinded message and check modulus-length bounds.
 pub fn decode_blinded_msg(blinded_b64: &str, expected_len: usize) -> Result<Vec<u8>, IssueError> {
     let bytes = URL_SAFE_NO_PAD
@@ -250,27 +280,19 @@ pub fn decode_blinded_msg(blinded_b64: &str, expected_len: usize) -> Result<Vec<
     Ok(bytes)
 }
 
-/// Atomically verify GitHub eligibility, check & persist the nullifier, and
-/// issue a `VISO-POH-V1:` blind signature token.
-pub fn issue_blind_token(
+fn issue_verified_blind_token(
     store: &mut NullifierStore,
     hmac_secret: &[u8],
     issuer: &ConfiguredIssuer,
-    user: &GitHubUser,
+    account_id: &str,
     blinded_msg: &[u8],
     now_secs: u64,
+    account_label: &str,
 ) -> Result<String, IssueError> {
-    if issuer.provider != "github" {
-        return Err(IssueError::BadRequest(format!(
-            "unsupported provider {:?}",
-            issuer.provider
-        )));
-    }
-    check_github_eligibility(user, issuer, now_secs)?;
-    let nullifier = compute_nullifier(hmac_secret, &issuer.provider, &issuer.epoch, user.id);
+    let nullifier = compute_nullifier_id(hmac_secret, &issuer.provider, &issuer.epoch, account_id);
     if store.contains(&nullifier) {
         return Err(IssueError::AlreadyClaimed(format!(
-            "This GitHub account has already attested for epoch {}.",
+            "This {account_label} account has already attested for epoch {}.",
             issuer.epoch
         )));
     }
@@ -290,6 +312,62 @@ pub fn issue_blind_token(
         .map_err(|e| IssueError::Internal(format!("blind_sign failed: {e}")))?;
 
     encode_reply_token(&issuer.key_id, &blind_sig.0).map_err(IssueError::Internal)
+}
+
+/// Atomically verify GitHub eligibility, check & persist the nullifier, and
+/// issue a `VISO-POH-V1:` blind signature token.
+pub fn issue_blind_token(
+    store: &mut NullifierStore,
+    hmac_secret: &[u8],
+    issuer: &ConfiguredIssuer,
+    user: &GitHubUser,
+    blinded_msg: &[u8],
+    now_secs: u64,
+) -> Result<String, IssueError> {
+    if issuer.provider != "github" {
+        return Err(IssueError::BadRequest(format!(
+            "unsupported provider {:?}",
+            issuer.provider
+        )));
+    }
+    check_github_eligibility(user, issuer, now_secs)?;
+    issue_verified_blind_token(
+        store,
+        hmac_secret,
+        issuer,
+        &user.id.to_string(),
+        blinded_msg,
+        now_secs,
+        "GitHub",
+    )
+}
+
+/// Atomically verify Google eligibility (`email_verified == true`), check & persist
+/// the nullifier, and issue a `VISO-POH-V1:` blind signature token.
+pub fn issue_google_blind_token(
+    store: &mut NullifierStore,
+    hmac_secret: &[u8],
+    issuer: &ConfiguredIssuer,
+    user: &GoogleUser,
+    blinded_msg: &[u8],
+    now_secs: u64,
+) -> Result<String, IssueError> {
+    if issuer.provider != "google" {
+        return Err(IssueError::BadRequest(format!(
+            "unsupported provider {:?}",
+            issuer.provider
+        )));
+    }
+    check_google_eligibility(user)?;
+    issue_verified_blind_token(
+        store,
+        hmac_secret,
+        issuer,
+        user.sub.trim(),
+        blinded_msg,
+        now_secs,
+        "Google",
+    )
 }
 
 /// Generate a fresh RSA-2048 keypair, write `<prefix>.pkcs8.der` and
@@ -372,6 +450,55 @@ pub fn load_or_init_issuers_json(
     fs::write(issuers_path, &json)
         .map_err(|e| format!("write {}: {e}", issuers_path.display()))?;
     Ok((json, true))
+}
+
+/// When `auto_init` is true and no issuer for `provider` is present yet in
+/// `cfg_list`, mint a keypair under `data_dir/keys`, append it, and persist
+/// `issuers_path` if `persist_file` is `Some`.
+pub fn ensure_provider_issuer(
+    cfg_list: &mut Vec<IssuerConfigJson>,
+    persist_path: Option<&Path>,
+    data_dir: &Path,
+    key_id: &str,
+    min_age_days: i64,
+    min_public_repos: u64,
+) -> Result<bool, String> {
+    let parts: Vec<&str> = key_id.split(':').collect();
+    if parts.len() != 3 || parts.iter().any(|p| p.is_empty()) {
+        return Err(format!("key_id {key_id:?} must have format <provider>:<tier>:<epoch>"));
+    }
+    if cfg_list.iter().any(|c| c.provider == parts[0]) {
+        return Ok(false);
+    }
+    let keys_dir = data_dir.join("keys");
+    let safe_name: String = key_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let existing_sk = keys_dir.join(format!("{safe_name}.pkcs8.der"));
+    let sk_path = if existing_sk.exists() {
+        existing_sk
+    } else {
+        generate_issuer_keypair(key_id, &keys_dir)?.0
+    };
+    cfg_list.push(IssuerConfigJson {
+        key_id: key_id.to_string(),
+        provider: parts[0].to_string(),
+        tier: parts[1].to_string(),
+        epoch: parts[2].to_string(),
+        min_age_days,
+        min_public_repos,
+        pkcs8_path: Some(sk_path.to_string_lossy().into_owned()),
+        pkcs8_b64: None,
+    });
+    if let Some(path) = persist_path {
+        let json = serde_json::to_string_pretty(cfg_list).map_err(|e| format!("serialize config: {e}"))?;
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+        }
+        fs::write(path, &json).map_err(|e| format!("write {}: {e}", path.display()))?;
+    }
+    Ok(true)
 }
 
 pub fn load_issuer_from_config(cfg: &IssuerConfigJson) -> Result<ConfiguredIssuer, String> {
@@ -625,5 +752,102 @@ mod tests {
         assert_eq!(issuer1.spki_der, issuer2.spki_der);
 
         let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn end_to_end_google_eligibility_blind_sign_and_nullifier_persistence() {
+        let kp_v = KeyPair::generate(&mut OsRng, 2048).unwrap();
+        let iss_google = ConfiguredIssuer {
+            key_id: "google:verified:2026".into(),
+            provider: "google".into(),
+            tier: "verified".into(),
+            epoch: "2026".into(),
+            min_age_days: 0,
+            min_public_repos: 0,
+            spki_der: kp_v.pk.to_der().unwrap(),
+            modulus_bytes: kp_v.pk.as_ref().size(),
+            sk: kp_v.sk,
+        };
+        let kp_next = KeyPair::generate(&mut OsRng, 2048).unwrap();
+        let iss_next = ConfiguredIssuer {
+            key_id: "google:verified:2027".into(),
+            provider: "google".into(),
+            tier: "verified".into(),
+            epoch: "2027".into(),
+            min_age_days: 0,
+            min_public_repos: 0,
+            spki_der: kp_next.pk.to_der().unwrap(),
+            modulus_bytes: kp_next.pk.as_ref().size(),
+            sk: kp_next.sk,
+        };
+        let viso_issuers = vec![
+            PohIssuer {
+                key_id: "google:verified:2026",
+                provider: "google",
+                tier: "verified",
+                epoch: "2026",
+                spki_der: Box::leak(iss_google.spki_der.clone().into_boxed_slice()),
+            },
+            PohIssuer {
+                key_id: "google:verified:2027",
+                provider: "google",
+                tier: "verified",
+                epoch: "2027",
+                spki_der: Box::leak(iss_next.spki_der.clone().into_boxed_slice()),
+            },
+        ];
+
+        let log_path = temp_log("google-e2e");
+        let mut store = NullifierStore::open(&log_path).unwrap();
+        let hmac_secret = b"test-hmac-secret-at-least-32-bytes-long!";
+        let persona_pk = [9u8; 32];
+        let now_secs = 1_794_800_000;
+
+        // Unverified email is rejected
+        let unverified = GoogleUser {
+            sub: "110234567890".into(),
+            email_verified: Some(false),
+        };
+        let (blinded_b64, pending) =
+            blind_request(&mut OsRng, &viso_issuers[0], &persona_pk).unwrap();
+        let blinded_bytes = decode_blinded_msg(&blinded_b64, 256).unwrap();
+        assert!(matches!(
+            issue_google_blind_token(&mut store, hmac_secret, &iss_google, &unverified, &blinded_bytes, now_secs),
+            Err(IssueError::Ineligible(_))
+        ));
+
+        // Verified email issues token and persists nullifier
+        let user = GoogleUser {
+            sub: "110234567890".into(),
+            email_verified: Some(true),
+        };
+        let token = issue_google_blind_token(
+            &mut store,
+            hmac_secret,
+            &iss_google,
+            &user,
+            &blinded_bytes,
+            now_secs,
+        )
+        .unwrap();
+        let slot_bytes = finalize_attestation(&token, &pending, &viso_issuers).unwrap();
+        let badge = verify_attestation_with(&slot_bytes, &persona_pk, &viso_issuers).unwrap();
+        assert_eq!(badge.provider, "google");
+        assert_eq!(badge.tier, "verified");
+
+        // Same Google account cannot mint again in 2026
+        assert!(matches!(
+            issue_google_blind_token(&mut store, hmac_secret, &iss_google, &user, &blinded_bytes, now_secs),
+            Err(IssueError::AlreadyClaimed(_))
+        ));
+
+        // Next epoch is allowed
+        let (b2, p2) = blind_request(&mut OsRng, &viso_issuers[1], &persona_pk).unwrap();
+        let b2_bytes = decode_blinded_msg(&b2, 256).unwrap();
+        let t2 = issue_google_blind_token(&mut store, hmac_secret, &iss_next, &user, &b2_bytes, now_secs).unwrap();
+        let s2 = finalize_attestation(&t2, &p2, &viso_issuers).unwrap();
+        assert_eq!(verify_attestation_with(&s2, &persona_pk, &viso_issuers).unwrap().epoch, "2027");
+
+        let _ = fs::remove_file(&log_path);
     }
 }

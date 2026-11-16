@@ -21,17 +21,23 @@ use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use crate::core::{
-    decode_blinded_msg, generate_issuer_keypair, issue_blind_token, load_issuer_from_config,
-    load_or_init_issuers_json, now_unix_ms, now_unix_secs, purge_expired_pending,
-    ConfiguredIssuer, GitHubUser, IssueError, IssuerConfigJson, NullifierStore, PendingOAuth,
-    PublicIssuerInfo, MAX_PENDING_STATES,
+    decode_blinded_msg, ensure_provider_issuer, generate_issuer_keypair, issue_blind_token,
+    issue_google_blind_token, load_issuer_from_config, load_or_init_issuers_json, now_unix_ms,
+    now_unix_secs, purge_expired_pending, ConfiguredIssuer, GitHubUser, GoogleUser, IssueError,
+    IssuerConfigJson, NullifierStore, PendingOAuth, PublicIssuerInfo, MAX_PENDING_STATES,
 };
+
+#[derive(Clone)]
+struct OAuthCreds {
+    client_id: String,
+    client_secret: String,
+}
 
 struct AppState {
     http: reqwest::Client,
     public_base_url: String,
-    github_client_id: String,
-    github_client_secret: String,
+    github: Option<OAuthCreds>,
+    google: Option<OAuthCreds>,
     hmac_secret: Vec<u8>,
     issuers: HashMap<String, ConfiguredIssuer>,
     store: Mutex<NullifierStore>,
@@ -39,13 +45,13 @@ struct AppState {
 }
 
 #[derive(Deserialize)]
-struct GithubStartQuery {
+struct OAuthStartQuery {
     key_id: String,
     blinded: String,
 }
 
 #[derive(Deserialize)]
-struct GithubCallbackQuery {
+struct OAuthCallbackQuery {
     code: Option<String>,
     state: Option<String>,
     error: Option<String>,
@@ -136,32 +142,45 @@ fn load_or_create_hmac_secret(data_dir: &Path) -> Result<Vec<u8>, String> {
     Ok(secret)
 }
 
+fn optional_creds(id_var: &str, secret_var: &str) -> Result<Option<OAuthCreds>, String> {
+    let id = env::var(id_var).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let secret = env::var(secret_var).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    match (id, secret) {
+        (Some(client_id), Some(client_secret)) => Ok(Some(OAuthCreds { client_id, client_secret })),
+        (None, None) => Ok(None),
+        _ => Err(format!("both {id_var} and {secret_var} must be set together")),
+    }
+}
+
 async fn run_server() -> Result<(), String> {
     let bind_addr = env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
     let public_base_url = env::var("PUBLIC_BASE_URL")
         .map_err(|_| "PUBLIC_BASE_URL env var is required (e.g. https://poh.viso.example)".to_string())?
         .trim_end_matches('/')
         .to_string();
-    let github_client_id =
-        env::var("GITHUB_CLIENT_ID").map_err(|_| "GITHUB_CLIENT_ID env var is required")?;
-    let github_client_secret =
-        env::var("GITHUB_CLIENT_SECRET").map_err(|_| "GITHUB_CLIENT_SECRET env var is required")?;
+    let github = optional_creds("GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET")?;
+    let google = optional_creds("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET")?;
+    if github.is_none() && google.is_none() {
+        return Err("configure at least one OAuth provider (GITHUB_CLIENT_ID/SECRET or GOOGLE_CLIENT_ID/SECRET)".into());
+    }
     let data_dir = PathBuf::from(env::var("DATA_DIR").unwrap_or_else(|_| "./data".into()));
 
-    let cfg_raw = match env::var("ISSUERS_JSON") {
-        Ok(raw) if !raw.trim().is_empty() => raw,
-        _ => {
-            let issuers_path =
-                env::var("ISSUERS_CONFIG").unwrap_or_else(|_| "./issuers.json".into());
-            let auto_init = matches!(
-                env::var("AUTO_INIT_ISSUER").ok().as_deref(),
-                Some("1" | "true" | "TRUE" | "yes" | "YES")
-            );
-            let key_id = env::var("AUTO_KEY_ID").unwrap_or_else(|_| "github:age1y:2026".into());
+    let auto_init = matches!(
+        env::var("AUTO_INIT_ISSUER").ok().as_deref(),
+        Some("1" | "true" | "TRUE" | "yes" | "YES")
+    );
+    let issuers_path = env::var("ISSUERS_CONFIG").unwrap_or_else(|_| "./issuers.json".into());
+    let from_env = env::var("ISSUERS_JSON").ok().filter(|s| !s.trim().is_empty());
+
+    let mut cfg_list: Vec<IssuerConfigJson> = match from_env {
+        Some(ref raw) => serde_json::from_str(raw).map_err(|e| format!("parse ISSUERS_JSON: {e}"))?,
+        None => {
+            let default_kid = if github.is_some() { "github:age1y:2026" } else { "google:verified:2026" };
+            let key_id = env::var("AUTO_KEY_ID").unwrap_or_else(|_| default_kid.into());
             let min_age_days = env::var("AUTO_MIN_AGE_DAYS")
                 .ok()
                 .and_then(|s| s.parse::<i64>().ok())
-                .unwrap_or(365);
+                .unwrap_or(if key_id.starts_with("google:") { 0 } else { 365 });
             let min_public_repos = env::var("AUTO_MIN_PUBLIC_REPOS")
                 .ok()
                 .and_then(|s| s.parse::<u64>().ok())
@@ -180,11 +199,16 @@ async fn run_server() -> Result<(), String> {
                     data_dir.display()
                 );
             }
-            raw
+            serde_json::from_str(&raw).map_err(|e| format!("parse {issuers_path}: {e}"))?
         }
     };
-    let cfg_list: Vec<IssuerConfigJson> =
-        serde_json::from_str(&cfg_raw).map_err(|e| format!("parse issuers config: {e}"))?;
+    if auto_init && google.is_some() {
+        let google_kid = env::var("AUTO_GOOGLE_KEY_ID").unwrap_or_else(|_| "google:verified:2026".into());
+        let persist = from_env.is_none().then(|| Path::new(&issuers_path));
+        if ensure_provider_issuer(&mut cfg_list, persist, &data_dir, &google_kid, 0, 0)? {
+            eprintln!("Auto-initialized Google PoH issuer {google_kid}.");
+        }
+    }
     if cfg_list.is_empty() {
         return Err("issuers config must define at least one issuer".into());
     }
@@ -204,8 +228,8 @@ async fn run_server() -> Result<(), String> {
             .build()
             .map_err(|e| e.to_string())?,
         public_base_url,
-        github_client_id,
-        github_client_secret,
+        github,
+        google,
         hmac_secret,
         issuers,
         store: Mutex::new(store),
@@ -217,6 +241,8 @@ async fn run_server() -> Result<(), String> {
         .route("/keys", get(keys))
         .route("/github", get(github_start))
         .route("/github/callback", get(github_callback))
+        .route("/google", get(google_start))
+        .route("/google/callback", get(google_callback))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr)
@@ -251,46 +277,136 @@ async fn keys(State(state): State<Arc<AppState>>) -> (HeaderMap, Json<Vec<Public
     (headers, Json(list))
 }
 
-async fn github_start(
-    State(state): State<Arc<AppState>>,
-    Query(q): Query<GithubStartQuery>,
-) -> Response {
+async fn begin_oauth(
+    state: &AppState,
+    provider: &str,
+    q: &OAuthStartQuery,
+) -> Result<(String, String), Response> {
     let Some(issuer) = state.issuers.get(&q.key_id) else {
-        return html_error(StatusCode::BAD_REQUEST, "Unknown or disabled key_id.");
+        return Err(html_error(StatusCode::BAD_REQUEST, "Unknown or disabled key_id."));
     };
-    if issuer.provider != "github" {
-        return html_error(StatusCode::BAD_REQUEST, "Selected key_id is not a GitHub issuer.");
+    if issuer.provider != provider {
+        return Err(html_error(
+            StatusCode::BAD_REQUEST,
+            &format!("Selected key_id is not a {provider} issuer."),
+        ));
     }
-    let blinded_msg = match decode_blinded_msg(&q.blinded, issuer.modulus_bytes) {
-        Ok(b) => b,
-        Err(e) => return html_error(StatusCode::BAD_REQUEST, &e.to_string()),
-    };
+    let blinded_msg = decode_blinded_msg(&q.blinded, issuer.modulus_bytes)
+        .map_err(|e| html_error(StatusCode::BAD_REQUEST, &e.to_string()))?;
 
     let mut rand_state = [0u8; 24];
     OsRng.fill_bytes(&mut rand_state);
     let oauth_state = URL_SAFE_NO_PAD.encode(rand_state);
     let now_ms = now_unix_ms();
 
-    {
-        let mut pending = state.pending.lock().await;
-        purge_expired_pending(&mut pending, now_ms);
-        if pending.len() >= MAX_PENDING_STATES {
-            return html_error(StatusCode::SERVICE_UNAVAILABLE, "Too many pending OAuth requests; retry shortly.");
-        }
-        pending.insert(
-            oauth_state.clone(),
-            PendingOAuth {
-                key_id: issuer.key_id.clone(),
-                blinded_msg,
-                created_at_ms: now_ms,
-            },
-        );
+    let mut pending = state.pending.lock().await;
+    purge_expired_pending(&mut pending, now_ms);
+    if pending.len() >= MAX_PENDING_STATES {
+        return Err(html_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Too many pending OAuth requests; retry shortly.",
+        ));
     }
+    pending.insert(
+        oauth_state.clone(),
+        PendingOAuth {
+            key_id: issuer.key_id.clone(),
+            blinded_msg,
+            created_at_ms: now_ms,
+        },
+    );
+    Ok((oauth_state, format!("{}/{provider}/callback", state.public_base_url)))
+}
 
-    let redirect_uri = format!("{}/github/callback", state.public_base_url);
+async fn consume_callback<'a>(
+    state: &'a AppState,
+    provider_label: &str,
+    q: OAuthCallbackQuery,
+) -> Result<(String, PendingOAuth, &'a ConfiguredIssuer), Response> {
+    if let Some(err) = q.error {
+        return Err(html_error(
+            StatusCode::BAD_REQUEST,
+            &format!("{provider_label} authorization cancelled or failed: {err}"),
+        ));
+    }
+    let (Some(code), Some(oauth_state)) = (q.code, q.state) else {
+        return Err(html_error(StatusCode::BAD_REQUEST, "Missing code or state parameter."));
+    };
+    let entry = {
+        let mut pending = state.pending.lock().await;
+        purge_expired_pending(&mut pending, now_unix_ms());
+        pending.remove(&oauth_state)
+    }
+    .ok_or_else(|| html_error(StatusCode::BAD_REQUEST, "OAuth state expired or already used. Please restart from Viso."))?;
+    let issuer = state
+        .issuers
+        .get(&entry.key_id)
+        .ok_or_else(|| html_error(StatusCode::INTERNAL_SERVER_ERROR, "Configured issuer disappeared."))?;
+    Ok((code, entry, issuer))
+}
+
+async fn exchange_code(
+    state: &AppState,
+    provider_label: &str,
+    token_url: &str,
+    creds: &OAuthCreds,
+    code: &str,
+    redirect_uri: &str,
+    extra_grant: Option<(&str, &str)>,
+) -> Result<String, Response> {
+    let mut form = vec![
+        ("client_id", creds.client_id.as_str()),
+        ("client_secret", creds.client_secret.as_str()),
+        ("code", code),
+        ("redirect_uri", redirect_uri),
+    ];
+    if let Some(g) = extra_grant {
+        form.push(g);
+    }
+    let res = state
+        .http
+        .post(token_url)
+        .header(header::ACCEPT, "application/json")
+        .form(&form)
+        .send()
+        .await;
+    match res {
+        Ok(resp) if resp.status().is_success() => match resp.json::<TokenResponse>().await {
+            Ok(tr) => tr.access_token.ok_or_else(|| {
+                let msg = tr.error_description.or(tr.error).unwrap_or_else(|| "missing access_token".into());
+                html_error(StatusCode::BAD_GATEWAY, &format!("{provider_label} OAuth failed: {msg}"))
+            }),
+            Err(e) => Err(html_error(StatusCode::BAD_GATEWAY, &format!("Bad {provider_label} token JSON: {e}"))),
+        },
+        Ok(resp) => Err(html_error(StatusCode::BAD_GATEWAY, &format!("{provider_label} token endpoint returned {}", resp.status()))),
+        Err(e) => Err(html_error(StatusCode::BAD_GATEWAY, &format!("Failed contacting {provider_label}: {e}"))),
+    }
+}
+
+fn finish_token_response(provider_label: &str, issuer: &ConfiguredIssuer, issued: Result<String, IssueError>) -> Response {
+    match issued {
+        Ok(token) => html_token_success(provider_label, &token, &issuer.key_id),
+        Err(IssueError::Ineligible(m)) => html_error(StatusCode::FORBIDDEN, &m),
+        Err(IssueError::AlreadyClaimed(m)) => html_error(StatusCode::CONFLICT, &m),
+        Err(IssueError::BadRequest(m)) => html_error(StatusCode::BAD_REQUEST, &m),
+        Err(IssueError::Internal(m)) => html_error(StatusCode::INTERNAL_SERVER_ERROR, &m),
+    }
+}
+
+async fn github_start(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<OAuthStartQuery>,
+) -> Response {
+    let Some(creds) = state.github.as_ref() else {
+        return html_error(StatusCode::SERVICE_UNAVAILABLE, "GitHub OAuth is not configured on this gatekeeper.");
+    };
+    let (oauth_state, redirect_uri) = match begin_oauth(&state, "github", &q).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
     let url = format!(
         "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&state={}",
-        url_encode(&state.github_client_id),
+        url_encode(&creds.client_id),
         url_encode(&redirect_uri),
         url_encode(&oauth_state),
     );
@@ -299,56 +415,29 @@ async fn github_start(
 
 async fn github_callback(
     State(state): State<Arc<AppState>>,
-    Query(q): Query<GithubCallbackQuery>,
+    Query(q): Query<OAuthCallbackQuery>,
 ) -> Response {
-    if let Some(err) = q.error {
-        return html_error(StatusCode::BAD_REQUEST, &format!("GitHub authorization cancelled or failed: {err}"));
-    }
-    let (Some(code), Some(oauth_state)) = (q.code, q.state) else {
-        return html_error(StatusCode::BAD_REQUEST, "Missing code or state parameter.");
+    let Some(creds) = state.github.as_ref() else {
+        return html_error(StatusCode::SERVICE_UNAVAILABLE, "GitHub OAuth is not configured on this gatekeeper.");
     };
-
-    let pending_entry = {
-        let mut pending = state.pending.lock().await;
-        let now_ms = now_unix_ms();
-        purge_expired_pending(&mut pending, now_ms);
-        pending.remove(&oauth_state)
+    let (code, entry, issuer) = match consume_callback(&state, "GitHub", q).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
-    let Some(entry) = pending_entry else {
-        return html_error(StatusCode::BAD_REQUEST, "OAuth state expired or already used. Please restart from Viso.");
-    };
-
-    let Some(issuer) = state.issuers.get(&entry.key_id) else {
-        return html_error(StatusCode::INTERNAL_SERVER_ERROR, "Configured issuer disappeared.");
-    };
-
     let redirect_uri = format!("{}/github/callback", state.public_base_url);
-    let token_res = state
-        .http
-        .post("https://github.com/login/oauth/access_token")
-        .header(header::ACCEPT, "application/json")
-        .form(&[
-            ("client_id", state.github_client_id.as_str()),
-            ("client_secret", state.github_client_secret.as_str()),
-            ("code", code.as_str()),
-            ("redirect_uri", redirect_uri.as_str()),
-        ])
-        .send()
-        .await;
-
-    let access_token = match token_res {
-        Ok(resp) if resp.status().is_success() => match resp.json::<TokenResponse>().await {
-            Ok(tr) => match tr.access_token {
-                Some(t) => t,
-                None => {
-                    let msg = tr.error_description.or(tr.error).unwrap_or_else(|| "missing access_token".into());
-                    return html_error(StatusCode::BAD_GATEWAY, &format!("GitHub OAuth failed: {msg}"));
-                }
-            },
-            Err(e) => return html_error(StatusCode::BAD_GATEWAY, &format!("Bad GitHub token JSON: {e}")),
-        },
-        Ok(resp) => return html_error(StatusCode::BAD_GATEWAY, &format!("GitHub token endpoint returned {}", resp.status())),
-        Err(e) => return html_error(StatusCode::BAD_GATEWAY, &format!("Failed contacting GitHub: {e}")),
+    let access_token = match exchange_code(
+        &state,
+        "GitHub",
+        "https://github.com/login/oauth/access_token",
+        creds,
+        &code,
+        &redirect_uri,
+        None,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(resp) => return resp,
     };
 
     let user_res = state
@@ -358,7 +447,6 @@ async fn github_callback(
         .header(header::ACCEPT, "application/vnd.github+json")
         .send()
         .await;
-
     let user = match user_res {
         Ok(resp) if resp.status().is_success() => match resp.json::<GitHubUser>().await {
             Ok(u) => u,
@@ -370,23 +458,78 @@ async fn github_callback(
 
     let issued = {
         let mut store = state.store.lock().await;
-        issue_blind_token(
-            &mut store,
-            &state.hmac_secret,
-            issuer,
-            &user,
-            &entry.blinded_msg,
-            now_unix_secs(),
-        )
+        issue_blind_token(&mut store, &state.hmac_secret, issuer, &user, &entry.blinded_msg, now_unix_secs())
+    };
+    finish_token_response("GitHub", issuer, issued)
+}
+
+async fn google_start(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<OAuthStartQuery>,
+) -> Response {
+    let Some(creds) = state.google.as_ref() else {
+        return html_error(StatusCode::SERVICE_UNAVAILABLE, "Google OAuth is not configured on this gatekeeper.");
+    };
+    let (oauth_state, redirect_uri) = match begin_oauth(&state, "google", &q).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let url = format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid%20email&state={}",
+        url_encode(&creds.client_id),
+        url_encode(&redirect_uri),
+        url_encode(&oauth_state),
+    );
+    Redirect::temporary(&url).into_response()
+}
+
+async fn google_callback(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<OAuthCallbackQuery>,
+) -> Response {
+    let Some(creds) = state.google.as_ref() else {
+        return html_error(StatusCode::SERVICE_UNAVAILABLE, "Google OAuth is not configured on this gatekeeper.");
+    };
+    let (code, entry, issuer) = match consume_callback(&state, "Google", q).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let redirect_uri = format!("{}/google/callback", state.public_base_url);
+    let access_token = match exchange_code(
+        &state,
+        "Google",
+        "https://oauth2.googleapis.com/token",
+        creds,
+        &code,
+        &redirect_uri,
+        Some(("grant_type", "authorization_code")),
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(resp) => return resp,
     };
 
-    match issued {
-        Ok(token) => html_token_success(&token, &issuer.key_id),
-        Err(IssueError::Ineligible(m)) => html_error(StatusCode::FORBIDDEN, &m),
-        Err(IssueError::AlreadyClaimed(m)) => html_error(StatusCode::CONFLICT, &m),
-        Err(IssueError::BadRequest(m)) => html_error(StatusCode::BAD_REQUEST, &m),
-        Err(IssueError::Internal(m)) => html_error(StatusCode::INTERNAL_SERVER_ERROR, &m),
-    }
+    let user_res = state
+        .http
+        .get("https://openidconnect.googleapis.com/v1/userinfo")
+        .bearer_auth(&access_token)
+        .send()
+        .await;
+    let user = match user_res {
+        Ok(resp) if resp.status().is_success() => match resp.json::<GoogleUser>().await {
+            Ok(u) => u,
+            Err(e) => return html_error(StatusCode::BAD_GATEWAY, &format!("Bad Google userinfo JSON: {e}")),
+        },
+        Ok(resp) => return html_error(StatusCode::BAD_GATEWAY, &format!("Google userinfo returned {}", resp.status())),
+        Err(e) => return html_error(StatusCode::BAD_GATEWAY, &format!("Failed reading Google userinfo: {e}")),
+    };
+
+    let issued = {
+        let mut store = state.store.lock().await;
+        issue_google_blind_token(&mut store, &state.hmac_secret, issuer, &user, &entry.blinded_msg, now_unix_secs())
+    };
+    finish_token_response("Google", issuer, issued)
 }
 
 fn no_store_headers() -> HeaderMap {
@@ -396,7 +539,8 @@ fn no_store_headers() -> HeaderMap {
     h
 }
 
-fn html_token_success(token: &str, key_id: &str) -> Response {
+fn html_token_success(provider_label: &str, token: &str, key_id: &str) -> Response {
+    let esc_provider = html_escape(provider_label);
     let esc_token = html_escape(token);
     let esc_key_id = html_escape(key_id);
     let body = format!(
@@ -416,7 +560,7 @@ fn html_token_success(token: &str, key_id: &str) -> Response {
 </head>
 <body>
 <div class="card">
-  <h2>GitHub eligibility verified</h2>
+  <h2>{esc_provider} eligibility verified</h2>
   <p class="muted">Tier: <code>{esc_key_id}</code>. This service never saw your Viso public key.</p>
   <p>Copy this blind-signed token back into Viso to attach the anonymous badge to your persona:</p>
   <textarea id="tok" readonly>{esc_token}</textarea>

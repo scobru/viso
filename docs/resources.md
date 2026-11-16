@@ -72,8 +72,8 @@ for you and exposes `Identity::ante_bits`; a slot that fails is
 
 Policy is yours: accept a write when `ante_bits >= min_bits`, with
 `min_bits` set so one persona's grind outweighs what one write is worth.
-Rough guide: 16 bits is a speed bump, 20 a real moment, 24 tens of
-seconds in a browser. Each +1 bit doubles the cost.
+Rough guide: 16 bits (`Seeded`) is a speed bump, 20 (`Forged`) a real moment, 24 (`Veteran`) tens of
+seconds in a browser. Each +1 bit doubles the cost. `viso_ante::tier_for_bits` maps these three UI badge thresholds.
 
 **Scope.** A level shows a key *cost something*. It does **not** show the
 persona is unique, human-held, or not one of many an attacker ground —
@@ -84,12 +84,12 @@ The identity contract does not inspect this slot (any correctly signed
 slot is valid there), so adding it changed no contract bytes and no
 address.
 
-## Slot: `poh:<provider>` (e.g. `poh:github`)
+## Slot: `poh:<provider>` (e.g. `poh:github`, `poh:google`)
 
 An **anonymous Proof-of-Personhood attestation** issued via RFC 9474 Blind
 RSA (`RSABSSA-SHA384-PSS-Randomized`). Proves the persona belongs to a
 verified off-chain account (for example a GitHub `User` account at least
-365 days old) without revealing the external account, and without letting the
+365 days old, or a verified-email Google account) without revealing the external account, and without letting the
 issuer link the external account to the persona's public key.
 
 Content is CBOR `PohAttestationV1 { version: 1, key_id: String, msg_randomizer: bytes(32), sig: bytes }`,

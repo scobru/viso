@@ -52,6 +52,27 @@ pub fn make_slot(sk: &SigningKey, nonce: u64, ts_ms: u64) -> Vec<u8> {
     ante_core::to_cbor(&AnteProof::create(sk, PURPOSE.to_string(), nonce, ts_ms))
 }
 
+/// Visual proof-of-commitment tier derived purely from achieved leading zero bits.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct AnteTier {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub min_bits: u32,
+}
+
+/// Map achieved `ante` PoW bits to a standard UI commitment tier badge (`16b Seeded`, `20b Forged`, `24b Veteran`).
+pub fn tier_for_bits(bits: u32) -> Option<AnteTier> {
+    if bits >= 24 {
+        Some(AnteTier { id: "gold", label: "Veteran", min_bits: 24 })
+    } else if bits >= 20 {
+        Some(AnteTier { id: "silver", label: "Forged", min_bits: 20 })
+    } else if bits >= 16 {
+        Some(AnteTier { id: "bronze", label: "Seeded", min_bits: 16 })
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,6 +119,18 @@ mod tests {
         let n = grind_step(&pk, 0, u64::MAX, 12).unwrap();
         assert!(bits(&pk, n) >= 12);
         assert_eq!(grind_step(&pk, 0, n, 12), None, "n is the smallest hit");
+    }
+
+    #[test]
+    fn tier_for_bits_maps_thresholds() {
+        assert_eq!(tier_for_bits(0), None);
+        assert_eq!(tier_for_bits(15), None);
+        assert_eq!(tier_for_bits(16).map(|t| t.label), Some("Seeded"));
+        assert_eq!(tier_for_bits(19).map(|t| t.id), Some("bronze"));
+        assert_eq!(tier_for_bits(20).map(|t| t.label), Some("Forged"));
+        assert_eq!(tier_for_bits(23).map(|t| t.id), Some("silver"));
+        assert_eq!(tier_for_bits(24).map(|t| t.label), Some("Veteran"));
+        assert_eq!(tier_for_bits(30).map(|t| t.id), Some("gold"));
     }
 
     /// ante's pinned vector still decodes and verifies through our pinned

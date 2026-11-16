@@ -36,13 +36,13 @@ pub static IDENTITY_STATES: GlobalSignal<BTreeMap<[u8; 32], Option<IdentityState
     Signal::global(BTreeMap::new);
 
 /// Pending Blind-RSA PoH blinding secrets persisted in `viso-delegate`
-/// (`pohpending:<index>`) across the external OAuth round-trip.
-pub static POH_PENDING: GlobalSignal<BTreeMap<u32, PendingBlindState>> =
+/// (`pohpending:<index>` or `pohpending:<provider>:<index>`) across the external OAuth round-trip.
+pub static POH_PENDING: GlobalSignal<BTreeMap<(u32, String), PendingBlindState>> =
     Signal::global(BTreeMap::new);
 
-/// Verified, unblinded `poh:github` slot bytes staged in `viso-delegate`
-/// (`pohstaged:<index>`) so a Freenet publish timeout never loses an issued badge.
-pub static POH_STAGED: GlobalSignal<BTreeMap<u32, Vec<u8>>> =
+/// Verified, unblinded `poh:<provider>` slot bytes staged in `viso-delegate`
+/// (`pohstaged:<index>` or `pohstaged:<provider>:<index>`) so a Freenet publish timeout never loses an issued badge.
+pub static POH_STAGED: GlobalSignal<BTreeMap<(u32, String), Vec<u8>>> =
     Signal::global(BTreeMap::new);
 
 /// Most recent node-level contract request error `(timestamp_ms, message)` so

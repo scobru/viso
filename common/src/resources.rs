@@ -12,6 +12,13 @@ pub const SLOT_GHOSTKEY: &str = "ghostkey";
 pub const SLOT_POH_PREFIX: &str = "poh:";
 /// Anonymous GitHub Proof-of-Personhood slot (see `poh` module, feature `poh`).
 pub const SLOT_POH_GITHUB: &str = "poh:github";
+/// Anonymous Google Proof-of-Personhood slot (see `poh` module, feature `poh`).
+pub const SLOT_POH_GOOGLE: &str = "poh:google";
+
+/// Canonical `poh:<provider>` identity slot name.
+pub fn poh_slot(provider: &str) -> String {
+    format!("{SLOT_POH_PREFIX}{provider}")
+}
 
 pub const MAX_NAME_CHARS: usize = 64;
 pub const MAX_BIO_CHARS: usize = 280;

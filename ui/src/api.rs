@@ -471,28 +471,37 @@ fn dispatch_kv(payload: &[u8]) {
                         }
                     },
                 }
-            } else if let Some(idx_str) = key.strip_prefix("pohpending:") {
-                if let Ok(idx) = idx_str.parse::<u32>() {
+            } else if let Some(rest) = key.strip_prefix("pohpending:") {
+                let parsed = match rest.split_once(':') {
+                    Some((prov, idx_s)) => idx_s.parse::<u32>().ok().map(|i| (i, prov.to_string())),
+                    None => rest.parse::<u32>().ok().map(|i| (i, "github".to_string())),
+                };
+                if let Some((idx, prov)) = parsed {
                     match value.as_deref() {
                         None => {
-                            POH_PENDING.write().remove(&idx);
+                            POH_PENDING.write().remove(&(idx, prov));
                         }
                         Some(v) => match viso_core::from_cbor::<viso_core::poh::PendingBlindState>(v) {
                             Ok(pending) => {
-                                POH_PENDING.write().insert(idx, pending);
+                                let actual_prov = pending.key_id.split(':').next().unwrap_or(&prov).to_string();
+                                POH_PENDING.write().insert((idx, actual_prov), pending);
                             }
-                            Err(e) => log(&format!("bad pohpending:{idx} in delegate: {e}")),
+                            Err(e) => log(&format!("bad pohpending:{rest} in delegate: {e}")),
                         },
                     }
                 }
-            } else if let Some(idx_str) = key.strip_prefix("pohstaged:") {
-                if let Ok(idx) = idx_str.parse::<u32>() {
+            } else if let Some(rest) = key.strip_prefix("pohstaged:") {
+                let parsed = match rest.split_once(':') {
+                    Some((prov, idx_s)) => idx_s.parse::<u32>().ok().map(|i| (i, prov.to_string())),
+                    None => rest.parse::<u32>().ok().map(|i| (i, "github".to_string())),
+                };
+                if let Some((idx, prov)) = parsed {
                     match value.as_deref() {
                         Some(v) if !v.is_empty() => {
-                            POH_STAGED.write().insert(idx, v.to_vec());
+                            POH_STAGED.write().insert((idx, prov), v.to_vec());
                         }
                         _ => {
-                            POH_STAGED.write().remove(&idx);
+                            POH_STAGED.write().remove(&(idx, prov));
                         }
                     }
                 }

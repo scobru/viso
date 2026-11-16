@@ -797,6 +797,61 @@ fn GithubIcon(#[props(default = 18)] size: u32) -> Element {
 }
 
 #[component]
+fn GoogleIcon(#[props(default = 18)] size: u32) -> Element {
+    rsx! {
+        svg {
+            view_box: "0 0 24 24",
+            width: "{size}",
+            height: "{size}",
+            fill: "currentColor",
+            "aria-hidden": "true",
+            path { d: "M21.35 11.1h-9.17v2.98h5.24c-.23 1.24-.92 2.29-1.97 2.99v2.48h3.18c1.86-1.71 2.93-4.23 2.93-7.21 0-.7-.06-1.38-.21-1.99z" }
+            path { d: "M12.18 22c2.66 0 4.89-.88 6.52-2.38l-3.18-2.48c-.88.59-2 .94-3.34.94-2.57 0-4.74-1.73-5.52-4.06H3.38v2.56C5 19.79 8.33 22 12.18 22z" }
+            path { d: "M6.66 14.02A5.95 5.95 0 0 1 6.35 12c0-.7.12-1.38.31-2.02V7.42H3.38A9.97 9.97 0 0 0 2.18 12c0 1.61.39 3.13 1.2 4.58l3.28-2.56z" }
+            path { d: "M12.18 5.92c1.45 0 2.75.5 3.77 1.48l2.83-2.83C17.06 2.96 14.84 2 12.18 2 8.33 2 5 4.21 3.38 7.42l3.28 2.56c.78-2.33 2.95-4.06 5.52-4.06z" }
+        }
+    }
+}
+
+#[component]
+fn PohProviderIcon(provider: &'static str, #[props(default = 18)] size: u32) -> Element {
+    if provider == "google" {
+        rsx! { GoogleIcon { size } }
+    } else {
+        rsx! { GithubIcon { size } }
+    }
+}
+
+#[component]
+fn BoltIcon(#[props(default = 12)] size: u32) -> Element {
+    rsx! {
+        svg {
+            width: "{size}",
+            height: "{size}",
+            view_box: "0 0 24 24",
+            fill: "currentColor",
+            "aria-hidden": "true",
+            path { d: "M13 2L4 14h6l-1 8 9-12h-6l1-8z" }
+        }
+    }
+}
+
+#[component]
+fn AnteTierChip(bits: u32) -> Element {
+    let Some(tier) = viso_ante::tier_for_bits(bits) else {
+        return rsx! {};
+    };
+    let cls = format!("ante-chip ante-{}", tier.id);
+    let title = format!("Verified ante PoW commitment ({bits} bits)");
+    rsx! {
+        span { class: "{cls}", title: "{title}",
+            BoltIcon { size: 11 }
+            "{tier.label} · {bits}b"
+        }
+    }
+}
+
+#[component]
 fn IdentityCard(index: u32, label: String) -> Element {
     let Some(pk) = actions::identity_pubkey(index) else {
         return rsx! {};
@@ -811,7 +866,9 @@ fn IdentityCard(index: u32, label: String) -> Element {
         .unwrap_or_else(|| label.clone());
     let bio = profile.map(|p| p.bio).unwrap_or_default();
     let is_destroyed = actions::is_persona_destroyed(index);
-    let poh_verified = !is_destroyed && actions::persona_poh_github(index, None).is_some();
+    let github_verified = !is_destroyed && actions::persona_poh(index, "github", None).is_some();
+    let google_verified = !is_destroyed && actions::persona_poh(index, "google", None).is_some();
+    let ante_bits = if is_destroyed { None } else { actions::persona_level(index) };
 
     rsx! {
         button { class: "card id-card", onclick: move |_| *VIEW.write() = View::Identity(index),
@@ -825,10 +882,21 @@ fn IdentityCard(index: u32, label: String) -> Element {
                         h3 { "{display}" }
                         if is_destroyed {
                             span { class: "destroyed-chip", title: "Permanently destroyed on Freenet", "Destroyed" }
-                        } else if poh_verified {
-                            span { class: "poh-chip", title: "Anonymous GitHub PoH verified",
-                                GithubIcon { size: 12 }
-                                "Verified"
+                        } else {
+                            if github_verified {
+                                span { class: "poh-chip", title: "Anonymous GitHub PoH verified",
+                                    GithubIcon { size: 12 }
+                                    "Verified"
+                                }
+                            }
+                            if google_verified {
+                                span { class: "poh-chip", title: "Anonymous Google PoH verified",
+                                    GoogleIcon { size: 12 }
+                                    "Google"
+                                }
+                            }
+                            if let Some(b) = ante_bits {
+                                AnteTierChip { bits: b }
                             }
                         }
                     }
@@ -1254,7 +1322,12 @@ fn Detail(index: u32) -> Element {
                     }
                     div { class: "id-title",
                         PersonaRenameRow { index, entry_label: entry_label.clone(), destroyed: false }
-                        code { class: "muted small", "{short_key(&pkb)}" }
+                        div { class: "id-title-row",
+                            code { class: "muted small", "{short_key(&pkb)}" }
+                            if let Some(b) = actions::persona_level(index) {
+                                AnteTierChip { bits: b }
+                            }
+                        }
                     }
                 }
                 p { class: "muted", "Profile picture — auto-cropped square, published as PNG:" }
@@ -1366,7 +1439,8 @@ fn Detail(index: u32) -> Element {
 
             PersonaLevel { index }
             PersonaGhostkey { index }
-            PersonaPoh { index }
+            PersonaPohCard { index, provider: "github" }
+            PersonaPohCard { index, provider: "google" }
 
             PersonaKeyCards { index, addr, contract_id }
             PersonaDelegationCard { index }
@@ -1609,9 +1683,12 @@ fn PersonaLevel(index: u32) -> Element {
                 "Spend a moment of CPU on this persona so apps can tell it from a free throwaway. It shows the persona cost something — not that it is unique or human."
             }
             label { "Current" }
-            p {
+            div { class: "id-title-row",
                 match level {
-                    Some(b) => rsx! { strong { "{b} bits" } },
+                    Some(b) => rsx! {
+                        strong { "{b} bits" }
+                        AnteTierChip { bits: b }
+                    },
                     None => rsx! { span { class: "muted", "none yet" } },
                 }
             }
@@ -1741,21 +1818,30 @@ fn PersonaGhostkey(index: u32) -> Element {
     }
 }
 
-/// Optional anonymous GitHub Proof-of-Personhood badge (`poh:github`).
+/// Optional anonymous Proof-of-Personhood badge (`poh:github` or `poh:google`).
 #[component]
-fn PersonaPoh(index: u32) -> Element {
+fn PersonaPohCard(index: u32, provider: &'static str) -> Element {
     use base64::Engine;
+    let is_google = provider == "google";
+    let provider_name = if is_google { "Google" } else { "GitHub" };
+    let default_kid = if is_google { "google:verified:2026" } else { "github:age1y:2026" };
+    let blurb = if is_google {
+        "Prove this persona is backed by a verified Google account via Blind RSA without revealing your Google identity or linking your Viso key."
+    } else {
+        "Prove this persona is backed by a real GitHub account (>= 1 year old) via Blind RSA without revealing your GitHub handle or linking your Viso key."
+    };
+
     let mut gatekeeper_url = use_signal(|| {
         option_env!("VISO_GATEKEEPER_URL")
             .unwrap_or("http://127.0.0.1:8080")
             .to_string()
     });
-    let mut custom_key_id = use_signal(|| "github:age1y:2026".to_string());
+    let mut custom_key_id = use_signal(move || default_kid.to_string());
     let mut custom_spki_b64 = use_signal(String::new);
-    let mut selected_pinned = use_signal(|| {
+    let mut selected_pinned = use_signal(move || {
         viso_core::poh::POH_ISSUERS
             .iter()
-            .find(|i| i.provider == "github")
+            .find(|i| i.provider == provider)
             .map(|i| i.key_id.to_string())
             .unwrap_or_default()
     });
@@ -1781,25 +1867,28 @@ fn PersonaPoh(index: u32) -> Element {
 
     let badge = {
         let custom_pair = custom_ref.as_ref().map(|(k, b)| (k.as_str(), *b));
-        actions::persona_poh_github(index, custom_pair)
+        actions::persona_poh(index, provider, custom_pair)
     };
-    let has_pending = POH_PENDING.read().contains_key(&index);
-    let has_staged = POH_STAGED.read().contains_key(&index);
-    let pinned_github: Vec<_> = viso_core::poh::POH_ISSUERS
+    let prov_key = (index, provider.to_string());
+    let has_pending = POH_PENDING.read().contains_key(&prov_key);
+    let has_staged = POH_STAGED.read().contains_key(&prov_key);
+    let pinned_for_provider: Vec<_> = viso_core::poh::POH_ISSUERS
         .iter()
-        .filter(|i| i.provider == "github")
+        .filter(|i| i.provider == provider)
         .copied()
         .collect();
 
     let is_verified = badge.is_some();
+    let icon_cls = if is_google { "poh-icon poh-icon-google" } else { "poh-icon" };
+    let btn_cls = if is_google { "google-btn" } else { "github-btn" };
 
     rsx! {
         div { class: "card",
             div { class: "poh-head",
                 div { class: "poh-head-left",
-                    span { class: "poh-icon", GithubIcon { size: 22 } }
+                    span { class: "{icon_cls}", PohProviderIcon { provider, size: 22 } }
                     div { class: "poh-title",
-                        h3 { "Anonymous GitHub PoH" }
+                        h3 { "Anonymous {provider_name} PoH" }
                         span { class: "muted small", "Blind RSA · zero-linkability" }
                     }
                 }
@@ -1809,15 +1898,13 @@ fn PersonaPoh(index: u32) -> Element {
                     span { class: "poh-pill", "Not linked" }
                 }
             }
-            p { class: "muted",
-                "Prove this persona is backed by a real GitHub account (>= 1 year old) via Blind RSA without revealing your GitHub handle or linking your Viso key."
-            }
+            p { class: "muted", "{blurb}" }
             match badge {
                 Some((b, is_pinned)) => rsx! {
                     div { class: "poh-verified",
-                        span { class: "poh-verified-icon", GithubIcon { size: 20 } }
+                        span { class: "poh-verified-icon", PohProviderIcon { provider, size: 20 } }
                         div { class: "poh-verified-body",
-                            strong { "GitHub Account Verified" }
+                            strong { "{provider_name} Account Verified" }
                             div { class: "poh-meta",
                                 span { class: "poh-tag", "provider: " code { "{b.provider}" } }
                                 span { class: "poh-tag", "tier: " code { "{b.tier}" } }
@@ -1833,7 +1920,7 @@ fn PersonaPoh(index: u32) -> Element {
                             busy.set(true);
                             err.set(String::new());
                             spawn(async move {
-                                if let Err(e) = actions::remove_poh_github(index).await { err.set(e); }
+                                if let Err(e) = actions::remove_poh(index, provider).await { err.set(e); }
                                 busy.set(false);
                             });
                         },
@@ -1848,7 +1935,7 @@ fn PersonaPoh(index: u32) -> Element {
                             span { class: "ok small", "saved locally" }
                         }
                         p { class: "muted small",
-                            "Your GitHub attestation is already unblinded, verified, and saved in your key store. Retry publishing it to Freenet — no new GitHub login needed."
+                            "Your {provider_name} attestation is already unblinded, verified, and saved in your key store. Retry publishing it to Freenet — no new {provider_name} login needed."
                         }
                         div { class: "row",
                             button {
@@ -1858,7 +1945,7 @@ fn PersonaPoh(index: u32) -> Element {
                                     busy.set(true);
                                     err.set(String::new());
                                     spawn(async move {
-                                        match actions::retry_publish_poh_github(index).await {
+                                        match actions::retry_publish_poh(index, provider).await {
                                             Ok(()) => {
                                                 token_input.set(String::new());
                                                 auth_url.set(String::new());
@@ -1879,7 +1966,7 @@ fn PersonaPoh(index: u32) -> Element {
                                         busy.set(true);
                                         err.set(String::new());
                                         spawn(async move {
-                                            if let Err(e) = actions::discard_poh_staged(index).await {
+                                            if let Err(e) = actions::discard_poh_staged(index, provider).await {
                                                 err.set(e);
                                             }
                                             confirm_discard_staged.set(false);
@@ -1906,10 +1993,10 @@ fn PersonaPoh(index: u32) -> Element {
                     }
                 },
                 None => rsx! {
-                    if !pinned_github.is_empty() {
+                    if !pinned_for_provider.is_empty() {
                         label { "Tier / Epoch" }
                         div { class: "row",
-                            for iss in pinned_github.iter() {
+                            for iss in pinned_for_provider.iter() {
                                 {
                                     let kid = iss.key_id.to_string();
                                     let active = *selected_pinned.read() == kid;
@@ -1934,15 +2021,15 @@ fn PersonaPoh(index: u32) -> Element {
                             oninput: move |e| gatekeeper_url.set(e.value()),
                             placeholder: "https://poh.example.org"
                         }
-                        if pinned_github.is_empty() {
+                        if pinned_for_provider.is_empty() {
                             p { class: "muted small",
-                                "No production issuers pinned in this build yet. Paste your Gatekeeper's key_id and SPKI (base64 from /keys) to test locally:"
+                                "No production {provider_name} issuers pinned in this build yet. Paste your Gatekeeper's key_id and SPKI (base64 from /keys) to use or test:"
                             }
                             label { "Issuer key_id" }
                             input {
                                 value: "{custom_key_id}",
                                 oninput: move |e| custom_key_id.set(e.value()),
-                                placeholder: "github:age1y:2026"
+                                placeholder: "{default_kid}"
                             }
                             label { "Issuer SPKI (base64)" }
                             textarea {
@@ -1956,14 +2043,14 @@ fn PersonaPoh(index: u32) -> Element {
                     div { class: "poh-step",
                         div { class: "poh-step-head",
                             span { class: "poh-step-num", "1" }
-                            span { "Authorize with GitHub" }
+                            span { "Authorize with {provider_name}" }
                             if has_pending {
                                 span { class: "ok small", "✓ blinding secret saved" }
                             }
                         }
                         if has_pending {
                             p { class: "muted small",
-                                "A blinding secret is already saved for this persona. Paste your VISO-POH-V1 token in Step 2 — resetting overwrites this secret and invalidates any token from the previous GitHub tab."
+                                "A blinding secret is already saved for this persona. Paste your VISO-POH-V1 token in Step 2 — resetting overwrites this secret and invalidates any token from the previous {provider_name} tab."
                             }
                             div { class: "row",
                                 if *confirm_reset.read() {
@@ -1974,7 +2061,7 @@ fn PersonaPoh(index: u32) -> Element {
                                             busy.set(true);
                                             err.set(String::new());
                                             spawn(async move {
-                                                if let Err(e) = actions::clear_poh_pending(index).await {
+                                                if let Err(e) = actions::clear_poh_pending(index, provider).await {
                                                     err.set(e);
                                                 } else {
                                                     auth_url.set(String::new());
@@ -2002,7 +2089,7 @@ fn PersonaPoh(index: u32) -> Element {
                             }
                         } else {
                             div { class: "row",
-                                button { class: "github-btn", disabled: *busy.read(),
+                                button { class: "{btn_cls}", disabled: *busy.read(),
                                     onclick: move |_| {
                                         busy.set(true);
                                         err.set(String::new());
@@ -2021,7 +2108,7 @@ fn PersonaPoh(index: u32) -> Element {
                                             };
                                             match resolved {
                                                 Ok((kid, spki)) => {
-                                                    match actions::start_poh_github(index, &gk, &kid, &spki).await {
+                                                    match actions::start_poh(index, provider, &gk, &kid, &spki).await {
                                                         Ok(url) => {
                                                             auth_url.set(url.clone());
                                                             confirm_reset.set(false);
@@ -2038,15 +2125,15 @@ fn PersonaPoh(index: u32) -> Element {
                                             busy.set(false);
                                         });
                                     },
-                                    GithubIcon { size: 18 }
-                                    "Connect with GitHub"
+                                    PohProviderIcon { provider, size: 18 }
+                                    "Connect with {provider_name}"
                                 }
                             }
                         }
                         if !auth_url.read().is_empty() {
                             p { class: "muted small",
                                 "If the popup did not open, open this link in a new tab: "
-                                a { href: "{auth_url}", target: "_blank", rel: "noopener noreferrer", "Authorize with GitHub" }
+                                a { href: "{auth_url}", target: "_blank", rel: "noopener noreferrer", "Authorize with {provider_name}" }
                             }
                         }
                     }
@@ -2075,7 +2162,7 @@ fn PersonaPoh(index: u32) -> Element {
                                         .decode(cb.trim())
                                         .ok();
                                     let custom_pair = custom_der.as_deref().map(|b| (ck.as_str(), b));
-                                    match actions::attach_poh_github(index, tok, custom_pair).await {
+                                    match actions::attach_poh(index, provider, tok, custom_pair).await {
                                         Ok(()) => {
                                             token_input.set(String::new());
                                             auth_url.set(String::new());

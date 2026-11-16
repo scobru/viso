@@ -286,11 +286,13 @@ pub async fn forget_destroyed_persona(index: u32) -> Result<(), String> {
     meta.identities.retain(|e| e.index != index);
     meta.next_index = meta.next_index.max(index + 1);
     store_meta(&meta).await?;
-    for key in [poh_pending_key(index), poh_staged_key(index)] {
-        let _ = api::kv_request(WhoiamDelegateRequest::Delete { key }).await;
+    for prov in ["github", "google"] {
+        for key in [poh_pending_key_for(index, prov), poh_staged_key_for(index, prov)] {
+            let _ = api::kv_request(WhoiamDelegateRequest::Delete { key }).await;
+        }
+        POH_PENDING.write().remove(&(index, prov.to_string()));
+        POH_STAGED.write().remove(&(index, prov.to_string()));
     }
-    POH_PENDING.write().remove(&index);
-    POH_STAGED.write().remove(&index);
     Ok(())
 }
 
@@ -500,28 +502,38 @@ pub async fn remove_ghostkey(index: u32) -> Result<(), String> {
     publish_slot(index, viso_core::resources::SLOT_GHOSTKEY, vec![]).await
 }
 
-pub fn poh_pending_key(index: u32) -> String {
-    format!("pohpending:{index}")
+pub fn poh_pending_key_for(index: u32, provider: &str) -> String {
+    if provider == "github" {
+        format!("pohpending:{index}")
+    } else {
+        format!("pohpending:{provider}:{index}")
+    }
 }
 
-pub fn poh_staged_key(index: u32) -> String {
-    format!("pohstaged:{index}")
+pub fn poh_staged_key_for(index: u32, provider: &str) -> String {
+    if provider == "github" {
+        format!("pohstaged:{index}")
+    } else {
+        format!("pohstaged:{provider}:{index}")
+    }
 }
 
-/// Verified GitHub Proof-of-Personhood badge for this persona, if published.
+/// Verified Proof-of-Personhood badge (`poh:<provider>`) for this persona, if published.
 /// Checks pinned production `POH_ISSUERS`, or an optional local/custom SPKI
 /// supplied for testing.
-pub fn persona_poh_github(
+pub fn persona_poh(
     index: u32,
+    provider: &str,
     custom_issuer: Option<(&str, &[u8])>,
 ) -> Option<(viso_core::poh::PohBadge, bool)> {
     let pk = identity_pubkey(index)?;
     let states = IDENTITY_STATES.read();
+    let slot_name = viso_core::resources::poh_slot(provider);
     let slot = states
         .get(&pk.to_bytes())?
         .as_ref()?
         .slots
-        .get(viso_core::resources::SLOT_POH_GITHUB)?;
+        .get(&slot_name)?;
     if slot.bytes.is_empty() {
         return None;
     }
@@ -548,37 +560,47 @@ pub fn persona_poh_github(
     None
 }
 
+pub fn persona_poh_github(
+    index: u32,
+    custom_issuer: Option<(&str, &[u8])>,
+) -> Option<(viso_core::poh::PohBadge, bool)> {
+    persona_poh(index, "github", custom_issuer)
+}
+
 /// Request any pending PoH blinding state or staged attestation for `index`
-/// from the node delegate.
+/// across supported providers from the node delegate.
 pub async fn load_poh_pending(index: u32) {
-    for key in [poh_pending_key(index), poh_staged_key(index)] {
-        let _ = api::kv_request(WhoiamDelegateRequest::Get { key }).await;
+    for prov in ["github", "google"] {
+        for key in [poh_pending_key_for(index, prov), poh_staged_key_for(index, prov)] {
+            let _ = api::kv_request(WhoiamDelegateRequest::Get { key }).await;
+        }
     }
 }
 
-/// Discard the active PoH blinding secret for `index` so a fresh OAuth flow
+/// Discard the active PoH blinding secret for `(index, provider)` so a fresh OAuth flow
 /// can be started intentionally.
-pub async fn clear_poh_pending(index: u32) -> Result<(), String> {
+pub async fn clear_poh_pending(index: u32, provider: &str) -> Result<(), String> {
     api::kv_request(WhoiamDelegateRequest::Delete {
-        key: poh_pending_key(index),
+        key: poh_pending_key_for(index, provider),
     })
     .await?;
-    POH_PENDING.write().remove(&index);
+    POH_PENDING.write().remove(&(index, provider.to_string()));
     Ok(())
 }
 
-/// Build the blinded PoH OAuth URL for `index`, persist `PendingBlindState`
+/// Build the blinded PoH OAuth URL for `(index, provider)`, persist `PendingBlindState`
 /// in `viso-delegate` so the blinding secret survives reloads, and return the URL.
-pub async fn start_poh_github(
+pub async fn start_poh(
     index: u32,
+    provider: &str,
     gatekeeper_url: &str,
     key_id: &str,
     spki_der: &[u8],
 ) -> Result<String, String> {
     let pk = identity_pubkey(index).ok_or("no identity")?;
     let parts: Vec<&str> = key_id.trim().split(':').collect();
-    if parts.len() != 3 || parts[0] != "github" {
-        return Err("key_id must have format github:<tier>:<epoch>".into());
+    if parts.len() != 3 || parts[0] != provider {
+        return Err(format!("key_id must have format {provider}:<tier>:<epoch>"));
     }
     let issuer = viso_core::poh::PohIssuer {
         key_id: key_id.trim(),
@@ -590,15 +612,15 @@ pub async fn start_poh_github(
     let (blinded_b64, pending) =
         viso_core::poh::blind_request(&mut rand::rngs::OsRng, &issuer, &pk.to_bytes())?;
     let cbor = viso_core::to_cbor(&pending)?;
-    kv_store_confirmed(&poh_pending_key(index), cbor).await?;
-    POH_PENDING.write().insert(index, pending);
+    kv_store_confirmed(&poh_pending_key_for(index, provider), cbor).await?;
+    POH_PENDING.write().insert((index, provider.to_string()), pending);
 
     let base = gatekeeper_url.trim().trim_end_matches('/');
     if !(base.starts_with("http://") || base.starts_with("https://")) {
         return Err("gatekeeper URL must start with http:// or https://".into());
     }
     Ok(format!(
-        "{base}/github?key_id={}&blinded={blinded_b64}",
+        "{base}/{provider}?key_id={}&blinded={blinded_b64}",
         url_encode(issuer.key_id)
     ))
 }
@@ -606,17 +628,19 @@ pub async fn start_poh_github(
 /// Unblind a `VISO-POH-V1:` token using the saved `PendingBlindState`, verify
 /// against `POH_ISSUERS` (or `custom_issuer` if provided), persist the verified
 /// attestation locally in `viso-delegate` before attempting Freenet publish,
-/// publish the `poh:github` slot, and clean up temporary delegate state.
-pub async fn attach_poh_github(
+/// publish the `poh:<provider>` slot, and clean up temporary delegate state.
+pub async fn attach_poh(
     index: u32,
+    provider: &str,
     token: String,
     custom_issuer: Option<(&str, &[u8])>,
 ) -> Result<(), String> {
+    let prov_key = (index, provider.to_string());
     let pending = POH_PENDING
         .peek()
-        .get(&index)
+        .get(&prov_key)
         .cloned()
-        .ok_or_else(|| "no pending verification found — click Connect with GitHub first".to_string())?;
+        .ok_or_else(|| "no pending verification found — click Connect in Step 1 first".to_string())?;
     let mut issuers: Vec<viso_core::poh::PohIssuer<'_>> = viso_core::poh::POH_ISSUERS.to_vec();
     if let Some((key_id, spki_der)) = custom_issuer {
         let parts: Vec<&str> = key_id.trim().split(':').collect();
@@ -631,53 +655,55 @@ pub async fn attach_poh_github(
         }
     }
     let slot_bytes = viso_core::poh::finalize_attestation(&token, &pending, &issuers)?;
-    // Persist verified slot bytes immediately so a Freenet publish timeout or
-    // page reload never loses the issued attestation.
-    kv_store_confirmed(&poh_staged_key(index), slot_bytes.clone()).await?;
-    POH_STAGED.write().insert(index, slot_bytes.clone());
+    kv_store_confirmed(&poh_staged_key_for(index, provider), slot_bytes.clone()).await?;
+    POH_STAGED.write().insert(prov_key.clone(), slot_bytes.clone());
     let _ = api::kv_request(WhoiamDelegateRequest::Delete {
-        key: poh_pending_key(index),
+        key: poh_pending_key_for(index, provider),
     })
     .await;
-    POH_PENDING.write().remove(&index);
+    POH_PENDING.write().remove(&prov_key);
 
-    publish_slot(index, viso_core::resources::SLOT_POH_GITHUB, slot_bytes).await?;
+    let slot_name = viso_core::resources::poh_slot(provider);
+    publish_slot(index, &slot_name, slot_bytes).await?;
     let _ = api::kv_request(WhoiamDelegateRequest::Delete {
-        key: poh_staged_key(index),
+        key: poh_staged_key_for(index, provider),
     })
     .await;
-    POH_STAGED.write().remove(&index);
+    POH_STAGED.write().remove(&prov_key);
     Ok(())
 }
 
-/// Retry publishing a locally-staged, already-verified `poh:github` slot to Freenet.
-pub async fn retry_publish_poh_github(index: u32) -> Result<(), String> {
+/// Retry publishing a locally-staged, already-verified `poh:<provider>` slot to Freenet.
+pub async fn retry_publish_poh(index: u32, provider: &str) -> Result<(), String> {
+    let prov_key = (index, provider.to_string());
     let slot_bytes = POH_STAGED
         .peek()
-        .get(&index)
+        .get(&prov_key)
         .cloned()
-        .ok_or_else(|| "no staged GitHub PoH badge found".to_string())?;
-    publish_slot(index, viso_core::resources::SLOT_POH_GITHUB, slot_bytes).await?;
+        .ok_or_else(|| "no staged PoH badge found".to_string())?;
+    let slot_name = viso_core::resources::poh_slot(provider);
+    publish_slot(index, &slot_name, slot_bytes).await?;
     let _ = api::kv_request(WhoiamDelegateRequest::Delete {
-        key: poh_staged_key(index),
+        key: poh_staged_key_for(index, provider),
     })
     .await;
-    POH_STAGED.write().remove(&index);
+    POH_STAGED.write().remove(&prov_key);
     Ok(())
 }
 
-/// Discard a locally-staged `poh:github` slot without publishing it.
-pub async fn discard_poh_staged(index: u32) -> Result<(), String> {
+/// Discard a locally-staged `poh:<provider>` slot without publishing it.
+pub async fn discard_poh_staged(index: u32, provider: &str) -> Result<(), String> {
     api::kv_request(WhoiamDelegateRequest::Delete {
-        key: poh_staged_key(index),
+        key: poh_staged_key_for(index, provider),
     })
     .await?;
-    POH_STAGED.write().remove(&index);
+    POH_STAGED.write().remove(&(index, provider.to_string()));
     Ok(())
 }
 
-pub async fn remove_poh_github(index: u32) -> Result<(), String> {
-    publish_slot(index, viso_core::resources::SLOT_POH_GITHUB, vec![]).await
+pub async fn remove_poh(index: u32, provider: &str) -> Result<(), String> {
+    let slot_name = viso_core::resources::poh_slot(provider);
+    publish_slot(index, &slot_name, vec![]).await
 }
 
 fn url_encode(s: &str) -> String {

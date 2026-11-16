@@ -13,13 +13,13 @@ everywhere.
   holding signed resource slots: `avatar`, `profile`, `ante`, `poh:*` (e.g. `poh:github`), and more in the future.
   See [docs/resources.md](docs/resources.md) for slot specifications and [docs/dapp-integration.md](docs/dapp-integration.md) for the dApp integration guide.
 - Built-in **persona level** (`ante` slot): a proof of commitment (PoW blake3)
-  ground in the UI and signed by the persona's own key, so apps can distinguish
+  ground in the UI and signed by the persona's own key (displayed as `Seeded · 16b`, `Forged · 20b`, `Veteran · 24b` commitment badges), so apps can distinguish
   legitimate users from zero-cost sybil spam. Built on [ante](https://github.com/soudasuwa/ante).
   See [docs/mining-and-ante.md](docs/mining-and-ante.md) for how mining and anti-spam policies work.
-- Optional **Anonymous Proof-of-Personhood** (`poh:github` slot): issued via RFC 9474 Blind RSA
+- Optional **Anonymous Proof-of-Personhood** (`poh:github`, `poh:google` slots): issued via RFC 9474 Blind RSA
   (`RSABSSA-SHA384-PSS-Randomized`) by [gatekeeper/](gatekeeper/). Proves a persona is backed by
-  a real GitHub account (≥ 1 year old) without revealing the GitHub handle or letting the issuer
-  link the GitHub account to the Viso public key.
+  a real GitHub account (≥ 1 year old) or verified Google account without revealing the external identity or letting the issuer
+  link it to the Viso public key.
 - The **delegate** is an origin-isolated secret store on your node
   holding the seed; all key derivation and signing happen in the UI.
 - **Destroying & Delegating** a persona: destroying publishes a signed permanent marker so public slots on Freenet can no longer be updated, while keeping the Ed25519 key available on your device (`Share with apps`, `Export private key`, local-only label renaming, and `"Sign in with Viso"`). Any persona — including a destroyed one — can issue a dual-signed **`DelegationProofV1`** certificate handing off mutable identity slots (e.g., `profile`, `avatar`, `poh:github`) to an active persona for a specific app (`radica`) or globally (`*`). See Section 7 of [docs/dapp-integration.md](docs/dapp-integration.md).
