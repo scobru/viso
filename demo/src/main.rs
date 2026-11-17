@@ -16,7 +16,7 @@ use freenet_stdlib::client_api::ContractResponse;
 use freenet_stdlib::client_api::{ClientRequest, ContractRequest, HostResponse, WebApi};
 use freenet_stdlib::prelude::*;
 use viso_core::merge::merge_state;
-use viso_core::resources::{ProfileV1, SLOT_AVATAR, SLOT_PROFILE};
+use viso_core::resources::{parse_linktree, ProfileV1, TreeItem, SLOT_AVATAR, SLOT_LINKTREE, SLOT_PROFILE};
 use viso_core::state::{IdentityParamsV1, IdentityStateV1};
 
 const PROOF_MAX_AGE_MS: u64 = 10 * 60 * 1000;
@@ -524,6 +524,11 @@ fn VerifiedView(pk: [u8; 32]) -> Element {
         viso_core::resources::check_avatar_bytes(&slot.bytes).ok()?;
         Some(slot.bytes.clone())
     });
+    let tree = state
+        .as_ref()
+        .and_then(|s| viso_core::resources::check_linktree_bytes(&s.slots.get(SLOT_LINKTREE)?.bytes))
+        .map(|md| parse_linktree(&md))
+        .unwrap_or_default();
     let destroyed = state.as_ref().is_some_and(|s| s.destroyed.is_some());
     // Proof-of-commitment level: verified for THIS key and purpose; a real
     // app compares it to its own min_bits policy before accepting writes.
@@ -561,6 +566,19 @@ fn VerifiedView(pk: [u8; 32]) -> Element {
                 }
                 if !bio.is_empty() { p { class: "bio", "{bio}" } }
                 if profile.is_none() { p { class: "muted", "No profile published yet — just a proven key." } }
+                if !tree.is_empty() {
+                    ul { class: "linktree",
+                        for (i, item) in tree.into_iter().enumerate() {
+                            li { key: "{i}",
+                                match item {
+                                    TreeItem::Heading(h) => rsx! { strong { "{h}" } },
+                                    TreeItem::Link { title, url } => rsx! { a { href: "{url}", target: "_blank", rel: "noopener noreferrer", "{title}" } },
+                                    TreeItem::Text(t) => rsx! { span { "{t}" } },
+                                }
+                            }
+                        }
+                    }
+                }
                 match ante_bits {
                     Some(b) => rsx! { p { class: "muted", "Persona level: ", strong { "{b} bits" }, " of proof of commitment." } },
                     None => rsx! { p { class: "muted", "Persona level: none — a zero-cost key as far as this app can tell." } },
