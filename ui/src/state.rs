@@ -69,6 +69,9 @@ pub struct ConnectRequest {
     pub challenge: String,
     /// True if the app requested a deterministic derived app secret (`key=v1`).
     pub request_key: bool,
+    /// The app's ephemeral X25519 public key (`epk`); the app secret is sealed
+    /// to it so it never appears in the URL in the clear. Required with `key=v1`.
+    pub client_epk: Option<[u8; 32]>,
 }
 
 impl ConnectRequest {

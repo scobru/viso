@@ -120,6 +120,16 @@ pub fn connect_request_from_location() -> Option<ConnectRequest> {
 
         let request_key = get_val("key").as_deref() == Some("v1");
 
+        // The app secret travels in a URL (browser history), so it is only
+        // ever sent encrypted to the app's ephemeral X25519 key.
+        let client_epk = get_val("epk")
+            .and_then(|h| data_encoding::HEXLOWER_PERMISSIVE.decode(h.as_bytes()).ok())
+            .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok());
+        if request_key && client_epk.is_none() {
+            api::log("[viso] connect request ignored: key=v1 requires epk (64 hex chars, X25519 public key)");
+            return None;
+        }
+
         let challenge = match get_val("challenge") {
             Some(c) => c,
             None if request_key => "auto".to_string(),
@@ -163,6 +173,7 @@ pub fn connect_request_from_location() -> Option<ConnectRequest> {
             return_url,
             challenge,
             request_key,
+            client_epk,
         })
     };
 

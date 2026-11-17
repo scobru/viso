@@ -850,7 +850,8 @@ fn callback_url(return_url: &str, params: &str) -> String {
 /// The signed approval callback URL: proof that this persona's key consented
 /// to identify to `req.origin` for this challenge, at this time.
 /// If `req.request_key` is true, Viso derives an app secret deterministically from the persona and app scope,
-/// delegates `wd1.<app_pubkey>.<nonce>` in the signed proof, and returns `#sk=<app_secret_hex>`.
+/// delegates `wd1.<app_pubkey>.<nonce>` in the signed proof, and returns
+/// `#esk=<viso_epk_hex>.<ciphertext_hex>`: the secret sealed to `req.client_epk` (see [`seal_app_secret`]).
 pub fn connect_ok_url(index: u32, req: &ConnectRequest, time_ms: u64) -> Result<String, String> {
     let sk = signing_key(index)?;
     let pk = sk.verifying_key();
@@ -864,7 +865,8 @@ pub fn connect_ok_url(index: u32, req: &ConnectRequest, time_ms: u64) -> Result<
         let app_pk = app_sk.verifying_key();
         let nonce = req.challenge_nonce();
         let ch = format!("wd1.{}.{}", hex(app_pk.as_bytes()), nonce);
-        let frag = format!("sk={}", hex(&sec));
+        let epk = req.client_epk.ok_or("key=v1 request without epk")?;
+        let frag = format!("esk={}", seal_app_secret(&sec, &epk));
         (ch, Some(frag))
     } else {
         (req.challenge.clone(), None)
@@ -890,6 +892,31 @@ pub fn connect_ok_url(index: u32, req: &ConnectRequest, time_ms: u64) -> Result<
         }
     }
     Ok(url)
+}
+
+/// Seal `secret` to the app's X25519 public key: ephemeral-static ECDH, key =
+/// blake3-KDF(shared || viso_epk || client_epk), ChaCha20-Poly1305 with a zero
+/// nonce (safe: the key is single-use, the ephemeral key is fresh per call).
+/// Returns `<viso_epk_hex>.<ciphertext_hex>` (ciphertext = 32-byte secret + 16-byte tag).
+fn seal_app_secret(secret: &[u8; 32], client_epk: &[u8; 32]) -> String {
+    use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit};
+    let esk = x25519_dalek::EphemeralSecret::random_from_rng(rand::rngs::OsRng);
+    let epk = x25519_dalek::PublicKey::from(&esk);
+    let shared = esk.diffie_hellman(&x25519_dalek::PublicKey::from(*client_epk));
+    let key = seal_key(shared.as_bytes(), epk.as_bytes(), client_epk);
+    let ct = ChaCha20Poly1305::new(&key.into())
+        .encrypt(&[0u8; 12].into(), secret.as_slice())
+        .expect("chacha20poly1305 encrypt");
+    let hex = |b: &[u8]| data_encoding::HEXLOWER.encode(b);
+    format!("{}.{}", hex(epk.as_bytes()), hex(&ct))
+}
+
+fn seal_key(shared: &[u8; 32], viso_epk: &[u8; 32], client_epk: &[u8; 32]) -> [u8; 32] {
+    let mut ikm = Vec::with_capacity(96);
+    ikm.extend_from_slice(shared);
+    ikm.extend_from_slice(viso_epk);
+    ikm.extend_from_slice(client_epk);
+    blake3::derive_key("viso connect v1 app secret", &ikm)
 }
 
 pub fn connect_denied_url(req: &ConnectRequest) -> String {
@@ -951,15 +978,37 @@ mod tests {
                 return_url: "http://127.0.0.1:7509/v1/contract/web/OrtoApp/".into(),
                 challenge: "1234567890abcdef".into(),
                 request_key: true,
+                client_epk: Some(*x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([7u8; 32])).as_bytes()),
             };
             let url = super::connect_ok_url(0, &req, 1000).unwrap();
             assert!(url.contains("viso=ok"));
-            assert!(url.contains("#sk="));
+            assert!(url.contains("#esk="));
+            assert!(!url.contains("sk="), "plaintext secret must not be in the url");
             assert!(url.contains("challenge=wd1."));
             VNode::empty()
         }
         let mut dom = VirtualDom::new(test_app);
         dom.rebuild_to_vec();
+    }
+
+    #[test]
+    fn sealed_secret_round_trips_only_for_the_client() {
+        use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit};
+        use x25519_dalek::{PublicKey, StaticSecret};
+        let secret = [0x42u8; 32];
+        let client = StaticSecret::from([7u8; 32]);
+        let client_pub = *PublicKey::from(&client).as_bytes();
+        let sealed = super::seal_app_secret(&secret, &client_pub);
+        let (epk_hex, ct_hex) = sealed.split_once('.').unwrap();
+        let epk: [u8; 32] = data_encoding::HEXLOWER.decode(epk_hex.as_bytes()).unwrap().try_into().unwrap();
+        let ct = data_encoding::HEXLOWER.decode(ct_hex.as_bytes()).unwrap();
+        let open = |sk: &StaticSecret| {
+            let shared = sk.diffie_hellman(&PublicKey::from(epk));
+            let key = super::seal_key(shared.as_bytes(), &epk, &client_pub);
+            ChaCha20Poly1305::new(&key.into()).decrypt(&[0u8; 12].into(), ct.as_slice())
+        };
+        assert_eq!(open(&client).unwrap(), secret);
+        assert!(open(&StaticSecret::from([8u8; 32])).is_err());
     }
 
     #[test]
