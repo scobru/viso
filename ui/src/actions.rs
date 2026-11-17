@@ -113,9 +113,14 @@ async fn kv_store_confirmed(key: &str, value: Vec<u8>) -> Result<(), String> {
 /// as `kv_store_confirmed`: a resolved `send()` is not an accepted write.
 async fn put_identity_confirmed(pk: &VerifyingKey, what: &str) -> Result<(), String> {
     let baseline = api::contract_acks(pk);
+    let pkb = pk.to_bytes();
+    let held = |pkb: &[u8; 32]| IDENTITY_STATES.peek().get(pkb).is_some_and(|e| e.is_some());
+    let had_state = held(&pkb);
     api::put_identity(pk, &IdentityStateV1::default()).await?;
     wait_until(
-        || api::contract_acks(pk) > baseline,
+        // Subscription echo counts too: the node can apply the PUT and
+        // notify us without the PutResponse ever arriving.
+        || api::contract_acks(pk) > baseline || (!had_state && held(&pkb)),
         CONTRACT_ACK_TIMEOUT_MS,
         what,
     )
