@@ -1900,7 +1900,7 @@ fn PersonaPohCard(index: u32, provider: &'static str) -> Element {
 
     let mut gatekeeper_url = use_signal(|| {
         option_env!("VISO_GATEKEEPER_URL")
-            .unwrap_or("http://127.0.0.1:8080")
+            .unwrap_or("https://viso-poh.scobrudot.dev")
             .to_string()
     });
     let mut custom_key_id = use_signal(move || default_kid.to_string());
