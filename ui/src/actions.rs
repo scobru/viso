@@ -894,29 +894,34 @@ pub fn connect_ok_url(index: u32, req: &ConnectRequest, time_ms: u64) -> Result<
     Ok(url)
 }
 
-/// Seal `secret` to the app's X25519 public key: ephemeral-static ECDH, key =
-/// blake3-KDF(shared || viso_epk || client_epk), ChaCha20-Poly1305 with a zero
-/// nonce (safe: the key is single-use, the ephemeral key is fresh per call).
-/// Returns `<viso_epk_hex>.<ciphertext_hex>` (ciphertext = 32-byte secret + 16-byte tag).
+/// Seal `secret` to the app's X25519 public key using only primitives WebCrypto
+/// has (so browser apps need no crypto library): ephemeral-static ECDH,
+/// HKDF-SHA256(salt = viso_epk || client_epk, info = [`SEAL_INFO`]) -> AES-256-GCM
+/// key, all-zero 12-byte nonce (safe: the key is single-use, the ephemeral key is
+/// fresh per call), no AAD. Returns `<viso_epk_hex>.<ciphertext_hex>`
+/// (ciphertext = 32-byte secret + 16-byte tag, the layout WebCrypto decrypts).
 fn seal_app_secret(secret: &[u8; 32], client_epk: &[u8; 32]) -> String {
-    use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit};
+    use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit};
     let esk = x25519_dalek::EphemeralSecret::random_from_rng(rand::rngs::OsRng);
     let epk = x25519_dalek::PublicKey::from(&esk);
     let shared = esk.diffie_hellman(&x25519_dalek::PublicKey::from(*client_epk));
     let key = seal_key(shared.as_bytes(), epk.as_bytes(), client_epk);
-    let ct = ChaCha20Poly1305::new(&key.into())
+    let ct = Aes256Gcm::new(&key.into())
         .encrypt(&[0u8; 12].into(), secret.as_slice())
-        .expect("chacha20poly1305 encrypt");
+        .expect("aes-gcm encrypt");
     let hex = |b: &[u8]| data_encoding::HEXLOWER.encode(b);
     format!("{}.{}", hex(epk.as_bytes()), hex(&ct))
 }
 
+const SEAL_INFO: &[u8] = b"viso connect v1 app secret";
+
 fn seal_key(shared: &[u8; 32], viso_epk: &[u8; 32], client_epk: &[u8; 32]) -> [u8; 32] {
-    let mut ikm = Vec::with_capacity(96);
-    ikm.extend_from_slice(shared);
-    ikm.extend_from_slice(viso_epk);
-    ikm.extend_from_slice(client_epk);
-    blake3::derive_key("viso connect v1 app secret", &ikm)
+    let salt = [viso_epk.as_slice(), client_epk.as_slice()].concat();
+    let mut key = [0u8; 32];
+    hkdf::Hkdf::<sha2::Sha256>::new(Some(&salt), shared)
+        .expand(SEAL_INFO, &mut key)
+        .expect("32 bytes is a valid HKDF output length");
+    key
 }
 
 pub fn connect_denied_url(req: &ConnectRequest) -> String {
@@ -993,7 +998,7 @@ mod tests {
 
     #[test]
     fn sealed_secret_round_trips_only_for_the_client() {
-        use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit};
+        use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit};
         use x25519_dalek::{PublicKey, StaticSecret};
         let secret = [0x42u8; 32];
         let client = StaticSecret::from([7u8; 32]);
@@ -1005,10 +1010,17 @@ mod tests {
         let open = |sk: &StaticSecret| {
             let shared = sk.diffie_hellman(&PublicKey::from(epk));
             let key = super::seal_key(shared.as_bytes(), &epk, &client_pub);
-            ChaCha20Poly1305::new(&key.into()).decrypt(&[0u8; 12].into(), ct.as_slice())
+            Aes256Gcm::new(&key.into()).decrypt(&[0u8; 12].into(), ct.as_slice())
         };
         assert_eq!(open(&client).unwrap(), secret);
         assert!(open(&StaticSecret::from([8u8; 32])).is_err());
+    }
+
+    /// Fixed vector for client implementers (see docs/dapp-integration.md).
+    #[test]
+    fn seal_key_known_answer() {
+        let k = super::seal_key(&[1u8; 32], &[2u8; 32], &[3u8; 32]);
+        assert_eq!(data_encoding::HEXLOWER.encode(&k), "19d4be8a0f28c60650e355bd8db0549ca0db302e5330c0c7353725981de879d2");
     }
 
     #[test]
