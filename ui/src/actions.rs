@@ -8,7 +8,7 @@ use viso_core::delegate_api::{
     IdentityEntry, IdentityMeta, WhoiamDelegateRequest, KEY_META, KEY_SEED,
 };
 use viso_core::derive::identity_signing_key;
-use viso_core::resources::{check_avatar_bytes, check_linktree, check_profile, ProfileV1, SLOT_AVATAR, SLOT_LINKTREE, SLOT_PROFILE};
+use viso_core::resources::{check_avatar_bytes, check_profile, ProfileV1, SLOT_AVATAR, SLOT_PROFILE};
 use viso_core::state::{sign_destroy, sign_slot, IdentityStateV1};
 
 use crate::api;
@@ -453,13 +453,6 @@ pub async fn save_profile(index: u32, name: String, bio: String) -> Result<(), S
     };
     check_profile(&profile)?;
     publish_slot(index, SLOT_PROFILE, viso_core::to_cbor(&profile)?).await
-}
-
-/// Create/update the link tree (markdown). Empty text = delete.
-pub async fn save_linktree(index: u32, md: String) -> Result<(), String> {
-    let md = md.trim().to_string();
-    check_linktree(&md)?;
-    publish_slot(index, SLOT_LINKTREE, md.into_bytes()).await
 }
 
 pub async fn publish_avatar(index: u32, png: Vec<u8>) -> Result<(), String> {
