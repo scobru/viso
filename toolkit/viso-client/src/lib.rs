@@ -68,8 +68,6 @@ pub struct Identity {
     /// against pinned issuer public keys and bound to this identity. Invalid or
     /// unrecognized slots are omitted rather than failing the fetch.
     pub poh: Vec<viso_core::poh::PohBadge>,
-    /// Parsed `linktree` slot (http(s) links only). Empty if absent or invalid.
-    pub linktree: Vec<viso_core::resources::TreeItem>,
     pub raw_slots: BTreeMap<String, Vec<u8>>,
 }
 
@@ -179,14 +177,8 @@ pub(crate) fn identity_from_state(
         .filter(|(name, _)| name.starts_with(SLOT_POH_PREFIX))
         .filter_map(|(_, b)| viso_core::poh::verify_attestation(b, pk.as_bytes()).ok())
         .collect();
-    let linktree = raw_slots
-        .get(viso_core::resources::SLOT_LINKTREE)
-        .and_then(|b| viso_core::resources::check_linktree_bytes(b))
-        .map(|md| viso_core::resources::parse_linktree(&md))
-        .unwrap_or_default();
     Ok(Identity {
         pubkey: *pk,
-        linktree,
         profile,
         avatar,
         ante_bits,

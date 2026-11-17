@@ -592,6 +592,3 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .poh-head { flex-wrap: wrap; }
 }
 
-
-.linktree { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 6px; }
-.linktree li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
