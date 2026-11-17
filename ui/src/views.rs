@@ -2,7 +2,7 @@
 
 use dioxus::prelude::*;
 #[allow(unused_imports)]
-use viso_core::resources::{ProfileV1, MAX_AVATAR_BYTES, MAX_BIO_CHARS, MAX_NAME_CHARS, SLOT_AVATAR, SLOT_PROFILE};
+use viso_core::resources::{ProfileV1, MAX_AVATAR_BYTES, MAX_BIO_CHARS, MAX_NAME_CHARS, SLOT_AVATAR, SLOT_LINKTREE, SLOT_PROFILE};
 
 use crate::actions;
 #[allow(unused_imports)]
@@ -1524,6 +1524,7 @@ fn Detail(index: u32) -> Element {
                 if !save_err.read().is_empty() { p { class: "error", "{save_err}" } }
             }
 
+            PersonaLinktree { index }
             PersonaLevel { index }
             PersonaGhostkey { index }
             PersonaPohCard { index, provider: "github" }
@@ -2265,6 +2266,115 @@ fn PersonaPohCard(index: u32, provider: &'static str) -> Element {
                         }
                     }
                 },
+            }
+            if !err.read().is_empty() { p { class: "error", "{err}" } }
+        }
+    }
+}
+
+fn published_linktree(index: u32) -> String {
+    with_published(index, |state| {
+        let b = &state.slots.get(SLOT_LINKTREE)?.bytes;
+        viso_core::resources::check_linktree_bytes(b)
+    })
+    .unwrap_or_default()
+}
+
+/// Link tree CRUD: markdown in, link list out. Create/update = publish text,
+/// delete = remove one link or the whole tree (publishes an empty slot).
+#[component]
+fn PersonaLinktree(index: u32) -> Element {
+    use viso_core::resources::{parse_linktree, TreeItem};
+    let published = published_linktree(index);
+    let mut draft = use_signal(String::new);
+    let mut editing = use_signal(|| false);
+    let mut title = use_signal(String::new);
+    let mut url = use_signal(String::new);
+    let mut busy = use_signal(|| false);
+    let mut err = use_signal(String::new);
+
+    let mut save = move |md: String| {
+        busy.set(true);
+        err.set(String::new());
+        spawn(async move {
+            match actions::save_linktree(index, md).await {
+                Ok(()) => {
+                    editing.set(false);
+                    title.set(String::new());
+                    url.set(String::new());
+                }
+                Err(e) => err.set(e),
+            }
+            busy.set(false);
+        });
+    };
+    let items = parse_linktree(&published);
+    let lines: Vec<String> = published.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
+
+    rsx! {
+        div { class: "card",
+            h3 { "Link tree" }
+            p { class: "muted", "Markdown, one per line: " code { "[title](https://…)" } ", " code { "# heading" } ". Public, shown by apps that read your persona." }
+            if *editing.read() {
+                textarea {
+                    rows: 8,
+                    value: "{draft}",
+                    placeholder: "# me\n[GitHub](https://github.com/you)",
+                    oninput: move |e| draft.set(e.value()),
+                }
+                div { class: "row",
+                    button { class: "primary", disabled: *busy.read(),
+                        onclick: move |_| save(draft.read().clone()),
+                        if *busy.read() { "Publishing…" } else { "Publish" }
+                    }
+                    button { class: "ghost", disabled: *busy.read(), onclick: move |_| editing.set(false), "cancel" }
+                }
+            } else {
+                if items.is_empty() { p { class: "muted", "No links yet." } }
+                ul { class: "linktree",
+                    for (i, item) in items.into_iter().enumerate() {
+                        li { key: "{i}",
+                            match item {
+                                TreeItem::Heading(h) => rsx! { strong { "{h}" } },
+                                TreeItem::Link { title, url } => rsx! { a { href: "{url}", target: "_blank", rel: "noopener noreferrer", "{title}" } },
+                                TreeItem::Text(t) => rsx! { span { "{t}" } },
+                            }
+                            button { class: "ghost small", disabled: *busy.read(), title: "remove this line",
+                                onclick: {
+                                    let mut rest = lines.clone();
+                                    rest.remove(i);
+                                    move |_| save(rest.join("\n"))
+                                },
+                                "×"
+                            }
+                        }
+                    }
+                }
+                div { class: "row",
+                    input { value: "{title}", placeholder: "title", oninput: move |e| title.set(e.value()) }
+                    input { value: "{url}", placeholder: "https://…", oninput: move |e| url.set(e.value()) }
+                    button { class: "ghost", disabled: *busy.read() || title.read().trim().is_empty() || url.read().trim().is_empty(),
+                        onclick: {
+                            let published = published.clone();
+                            move |_| {
+                                let t = title.read().replace(['[', ']'], "");
+                                let line = format!("[{}]({})", t.trim(), url.read().trim());
+                                if !matches!(parse_linktree(&line).first(), Some(TreeItem::Link { .. })) {
+                                    err.set("need a title and an http(s) URL without spaces".into());
+                                    return;
+                                }
+                                save(format!("{published}\n{line}"));
+                            }
+                        },
+                        "add link"
+                    }
+                }
+                div { class: "row",
+                    button { class: "ghost", onclick: { let p = published.clone(); move |_| { draft.set(p.clone()); editing.set(true); } }, "edit markdown" }
+                    if !published.is_empty() {
+                        button { class: "ghost", disabled: *busy.read(), onclick: move |_| save(String::new()), "delete tree" }
+                    }
+                }
             }
             if !err.read().is_empty() { p { class: "error", "{err}" } }
         }

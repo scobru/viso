@@ -35,6 +35,17 @@ CBOR `{ name: String, bio: String }`.
 Render as text; never interpret as HTML/markdown. `name` may be empty —
 fall back to an abbreviated pubkey.
 
+## Slot: `linktree`
+
+Raw UTF-8 markdown (the slot content IS the text), ≤ 8 KiB. One item per
+line: `# heading`, `[title](https://url)` (optional `- ` bullet), or plain
+text. Empty slot = no tree.
+
+Render only `http://`/`https://` links; demote anything else to text. Never
+interpret the markdown as HTML. `viso_core::resources::parse_linktree` does
+this; `viso-client` exposes `Identity::linktree`. The Viso UI offers full
+CRUD (add/remove a link, edit the markdown, delete the tree).
+
 ## Slot: `avatar`
 
 Raw image bytes (the slot content IS the file).
