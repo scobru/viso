@@ -74,18 +74,20 @@ pub struct ConnectRequest {
     pub client_epk: Option<[u8; 32]>,
 }
 
+/// The nonce of a challenge: the last `.`-separated part of `[wd1.<key>.]<nonce>`, or `auto` when empty.
+pub fn challenge_nonce_of(challenge: &str) -> String {
+    if challenge.is_empty() {
+        return "auto".to_string();
+    }
+    match challenge.split_once('.') {
+        Some((_, rest)) => rest.split_once('.').map_or(rest, |(_, nonce)| nonce).to_string(),
+        None => challenge.to_string(),
+    }
+}
+
 impl ConnectRequest {
     pub fn challenge_nonce(&self) -> String {
-        if self.challenge.is_empty() {
-            return "auto".to_string();
-        }
-        if let Some((_, rest)) = self.challenge.split_once('.') {
-            if let Some((_, nonce)) = rest.split_once('.') {
-                return nonce.to_string();
-            }
-            return rest.to_string();
-        }
-        self.challenge.clone()
+        challenge_nonce_of(&self.challenge)
     }
 }
 

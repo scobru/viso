@@ -866,7 +866,7 @@ pub fn connect_ok_url(index: u32, req: &ConnectRequest, time_ms: u64) -> Result<
         let nonce = req.challenge_nonce();
         let ch = format!("wd1.{}.{}", hex(app_pk.as_bytes()), nonce);
         let epk = req.client_epk.ok_or("key=v1 request without epk")?;
-        let frag = format!("esk={}", seal_app_secret(&sec, &epk));
+        let frag = format!("esk={}", seal_app_secret(&sec, &epk, ch.as_bytes()));
         (ch, Some(frag))
     } else {
         (req.challenge.clone(), None)
@@ -898,16 +898,16 @@ pub fn connect_ok_url(index: u32, req: &ConnectRequest, time_ms: u64) -> Result<
 /// has (so browser apps need no crypto library): ephemeral-static ECDH,
 /// HKDF-SHA256(salt = viso_epk || client_epk, info = [`SEAL_INFO`]) -> AES-256-GCM
 /// key, all-zero 12-byte nonce (safe: the key is single-use, the ephemeral key is
-/// fresh per call), no AAD. Returns `<viso_epk_hex>.<ciphertext_hex>`
+/// fresh per call), the signed challenge (`wd1.<app key>.<nonce>`) as AAD, so the box only opens for this sign-in. Returns `<viso_epk_hex>.<ciphertext_hex>`
 /// (ciphertext = 32-byte secret + 16-byte tag, the layout WebCrypto decrypts).
-fn seal_app_secret(secret: &[u8; 32], client_epk: &[u8; 32]) -> String {
-    use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit};
+fn seal_app_secret(secret: &[u8; 32], client_epk: &[u8; 32], aad: &[u8]) -> String {
+    use aes_gcm::{aead::{Aead, Payload}, Aes256Gcm, KeyInit};
     let esk = x25519_dalek::EphemeralSecret::random_from_rng(rand::rngs::OsRng);
     let epk = x25519_dalek::PublicKey::from(&esk);
     let shared = esk.diffie_hellman(&x25519_dalek::PublicKey::from(*client_epk));
     let key = seal_key(shared.as_bytes(), epk.as_bytes(), client_epk);
     let ct = Aes256Gcm::new(&key.into())
-        .encrypt(&[0u8; 12].into(), secret.as_slice())
+        .encrypt(&[0u8; 12].into(), Payload { msg: secret.as_slice(), aad })
         .expect("aes-gcm encrypt");
     let hex = |b: &[u8]| data_encoding::HEXLOWER.encode(b);
     format!("{}.{}", hex(epk.as_bytes()), hex(&ct))
@@ -954,6 +954,12 @@ mod tests {
     const SEED: [u8; 32] = [0x5A; 32];
 
     #[test]
+    fn challenge_nonce_forms() {
+        use crate::state::challenge_nonce_of as n;
+        assert_eq!((n("abc"), n("wd1.nonce"), n("wd1.key.nonce"), n("")), ("abc".into(), "nonce".into(), "nonce".into(), "auto".into()));
+    }
+
+    #[test]
     fn challenge_charset_enforced() {
         assert!(valid_challenge("abc123._~-"));
         assert!(!valid_challenge(""));
@@ -998,22 +1004,23 @@ mod tests {
 
     #[test]
     fn sealed_secret_round_trips_only_for_the_client() {
-        use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit};
+        use aes_gcm::{aead::{Aead, Payload}, Aes256Gcm, KeyInit};
         use x25519_dalek::{PublicKey, StaticSecret};
         let secret = [0x42u8; 32];
         let client = StaticSecret::from([7u8; 32]);
         let client_pub = *PublicKey::from(&client).as_bytes();
-        let sealed = super::seal_app_secret(&secret, &client_pub);
+        let sealed = super::seal_app_secret(&secret, &client_pub, b"wd1.aa.bb");
         let (epk_hex, ct_hex) = sealed.split_once('.').unwrap();
         let epk: [u8; 32] = data_encoding::HEXLOWER.decode(epk_hex.as_bytes()).unwrap().try_into().unwrap();
         let ct = data_encoding::HEXLOWER.decode(ct_hex.as_bytes()).unwrap();
-        let open = |sk: &StaticSecret| {
+        let open = |sk: &StaticSecret, aad: &[u8]| {
             let shared = sk.diffie_hellman(&PublicKey::from(epk));
             let key = super::seal_key(shared.as_bytes(), &epk, &client_pub);
-            Aes256Gcm::new(&key.into()).decrypt(&[0u8; 12].into(), ct.as_slice())
+            Aes256Gcm::new(&key.into()).decrypt(&[0u8; 12].into(), Payload { msg: ct.as_slice(), aad })
         };
-        assert_eq!(open(&client).unwrap(), secret);
-        assert!(open(&StaticSecret::from([8u8; 32])).is_err());
+        assert_eq!(open(&client, b"wd1.aa.bb").unwrap(), secret);
+        assert!(open(&StaticSecret::from([8u8; 32]), b"wd1.aa.bb").is_err());
+        assert!(open(&client, b"wd1.aa.cc").is_err(), "a different challenge must not open the box");
     }
 
     /// Fixed vector for client implementers (see docs/dapp-integration.md).

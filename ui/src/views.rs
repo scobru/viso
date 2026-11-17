@@ -147,6 +147,15 @@ pub fn connect_request_from_location() -> Option<ConnectRequest> {
             }
         };
 
+        // key=v1: the epk must be the challenge nonce, so the persona's signature over
+        // `wd1.<app key>.<nonce>` covers it (the app checks that on return).
+        if let Some(epk) = client_epk.filter(|_| request_key) {
+            if !crate::state::challenge_nonce_of(&challenge).eq_ignore_ascii_case(&data_encoding::HEXLOWER.encode(&epk)) {
+                api::log("[viso] connect request ignored: with key=v1 the challenge nonce must be the epk (hex)");
+                return None;
+            }
+        }
+
         if !actions::valid_challenge(&challenge) {
             api::log(&format!("[viso] connect request ignored: invalid challenge '{challenge}'"));
             return None;
