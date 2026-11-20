@@ -310,11 +310,16 @@ pub async fn forget_destroyed_persona(index: u32) -> Result<(), String> {
     meta.next_index = meta.next_index.max(index + 1);
     store_meta(&meta).await?;
     for prov in ["github", "google"] {
-        for key in [poh_pending_key_for(index, prov), poh_staged_key_for(index, prov)] {
+        for key in [
+            poh_pending_key_for(index, prov),
+            poh_staged_key_for(index, prov),
+            poh_backup_key_for(index, prov),
+        ] {
             let _ = api::kv_request(WhoiamDelegateRequest::Delete { key }).await;
         }
         POH_PENDING.write().remove(&(index, prov.to_string()));
         POH_STAGED.write().remove(&(index, prov.to_string()));
+        POH_BACKUP.write().remove(&(index, prov.to_string()));
     }
     Ok(())
 }
@@ -542,6 +547,10 @@ pub fn poh_staged_key_for(index: u32, provider: &str) -> String {
     }
 }
 
+pub fn poh_backup_key_for(index: u32, provider: &str) -> String {
+    format!("pohbackup:{provider}:{index}")
+}
+
 /// Verified Proof-of-Personhood badge (`poh:<provider>`) for this persona, if published.
 /// Checks pinned production `POH_ISSUERS`, or an optional local/custom SPKI
 /// supplied for testing.
@@ -591,11 +600,15 @@ pub fn persona_poh_github(
     persona_poh(index, "github", custom_issuer)
 }
 
-/// Request any pending PoH blinding state or staged attestation for `index`
+/// Request any pending PoH blinding state, staged attestation, or local backup for `index`
 /// across supported providers from the node delegate.
 pub async fn load_poh_pending(index: u32) {
     for prov in ["github", "google"] {
-        for key in [poh_pending_key_for(index, prov), poh_staged_key_for(index, prov)] {
+        for key in [
+            poh_pending_key_for(index, prov),
+            poh_staged_key_for(index, prov),
+            poh_backup_key_for(index, prov),
+        ] {
             let _ = api::kv_request(WhoiamDelegateRequest::Get { key }).await;
         }
     }
@@ -681,6 +694,13 @@ pub async fn attach_poh(
     let slot_bytes = viso_core::poh::finalize_attestation(&token, &pending, &issuers)?;
     kv_store_confirmed(&poh_staged_key_for(index, provider), slot_bytes.clone()).await?;
     POH_STAGED.write().insert(prov_key.clone(), slot_bytes.clone());
+    // Also keep a persistent local backup in viso-delegate so "Remove badge" can be undone without re-minting in the same epoch.
+    let _ = api::kv_request(WhoiamDelegateRequest::Store {
+        key: poh_backup_key_for(index, provider),
+        value: ByteBuf::from(slot_bytes.clone()),
+    })
+    .await;
+    POH_BACKUP.write().insert(prov_key.clone(), slot_bytes.clone());
     let _ = api::kv_request(WhoiamDelegateRequest::Delete {
         key: poh_pending_key_for(index, provider),
     })
@@ -705,6 +725,12 @@ pub async fn retry_publish_poh(index: u32, provider: &str) -> Result<(), String>
         .get(&prov_key)
         .cloned()
         .ok_or_else(|| "no staged PoH badge found".to_string())?;
+    let _ = api::kv_request(WhoiamDelegateRequest::Store {
+        key: poh_backup_key_for(index, provider),
+        value: ByteBuf::from(slot_bytes.clone()),
+    })
+    .await;
+    POH_BACKUP.write().insert(prov_key.clone(), slot_bytes.clone());
     let slot_name = viso_core::resources::poh_slot(provider);
     publish_slot(index, &slot_name, slot_bytes).await?;
     let _ = api::kv_request(WhoiamDelegateRequest::Delete {
@@ -725,9 +751,36 @@ pub async fn discard_poh_staged(index: u32, provider: &str) -> Result<(), String
     Ok(())
 }
 
+/// Unpublish `poh:<provider>` from Freenet, first saving a local backup in `viso-delegate`
+/// so the user can re-publish it without hitting the gatekeeper's 1-per-epoch nullifier limit.
 pub async fn remove_poh(index: u32, provider: &str) -> Result<(), String> {
     let slot_name = viso_core::resources::poh_slot(provider);
+    if let Some(pk) = identity_pubkey(index) {
+        let existing = IDENTITY_STATES
+            .peek()
+            .get(&pk.to_bytes())
+            .and_then(|s| s.as_ref())
+            .and_then(|s| s.slots.get(&slot_name))
+            .map(|slot| slot.bytes.clone())
+            .filter(|b| !b.is_empty());
+        if let Some(bytes) = existing {
+            let _ = kv_store_confirmed(&poh_backup_key_for(index, provider), bytes.clone()).await;
+            POH_BACKUP.write().insert((index, provider.to_string()), bytes);
+        }
+    }
     publish_slot(index, &slot_name, vec![]).await
+}
+
+/// Re-publish a previously backed-up `poh:<provider>` badge from `viso-delegate`.
+pub async fn restore_poh_backup(index: u32, provider: &str) -> Result<(), String> {
+    let prov_key = (index, provider.to_string());
+    let slot_bytes = POH_BACKUP
+        .peek()
+        .get(&prov_key)
+        .cloned()
+        .ok_or_else(|| "no saved badge backup found in key store".to_string())?;
+    let slot_name = viso_core::resources::poh_slot(provider);
+    publish_slot(index, &slot_name, slot_bytes).await
 }
 
 fn url_encode(s: &str) -> String {

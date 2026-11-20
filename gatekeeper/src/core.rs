@@ -202,13 +202,20 @@ pub fn now_unix_ms() -> u64 {
 /// Deterministic, non-reversible nullifier scoped to `(provider, epoch, account_id)`.
 /// Deliberately excludes `tier` so one external account can mint at most one Viso
 /// attestation per epoch across all tiers of a provider.
+/// Note: google uses `v2` domain separation so accounts whose `poh:google` badge was removed
+/// before Viso added local `pohbackup` persistence can re-attest without wiping GitHub nullifiers.
 pub fn compute_nullifier_id(
     hmac_secret: &[u8],
     provider: &str,
     epoch: &str,
     account_id: &str,
 ) -> [u8; 32] {
-    let msg = format!("viso-poh-nullifier-v1|{provider}|{epoch}|{account_id}");
+    let domain = if provider == "google" {
+        "viso-poh-nullifier-v2"
+    } else {
+        "viso-poh-nullifier-v1"
+    };
+    let msg = format!("{domain}|{provider}|{epoch}|{account_id}");
     hmac_sha256::HMAC::mac(msg.as_bytes(), hmac_secret)
 }
 

@@ -1980,6 +1980,7 @@ fn PersonaPohCard(index: u32, provider: &'static str) -> Element {
     let prov_key = (index, provider.to_string());
     let has_pending = POH_PENDING.read().contains_key(&prov_key);
     let has_staged = POH_STAGED.read().contains_key(&prov_key);
+    let has_backup = POH_BACKUP.read().contains_key(&prov_key);
     let pinned_for_provider: Vec<_> = viso_core::poh::POH_ISSUERS
         .iter()
         .filter(|i| i.provider == provider)
@@ -2101,6 +2102,35 @@ fn PersonaPohCard(index: u32, provider: &'static str) -> Element {
                     }
                 },
                 None => rsx! {
+                    if has_backup {
+                        div { class: "poh-step",
+                            div { class: "poh-step-head",
+                                span { class: "poh-step-num", "↺" }
+                                span { "Saved {provider_name} badge found on this device" }
+                                span { class: "ok small", "ready to restore" }
+                            }
+                            p { class: "muted small",
+                                "You previously verified a {provider_name} badge for this persona. Re-publish it directly to Freenet without logging in to {provider_name} again."
+                            }
+                            div { class: "row",
+                                button {
+                                    class: "primary",
+                                    disabled: *busy.read(),
+                                    onclick: move |_| {
+                                        busy.set(true);
+                                        err.set(String::new());
+                                        spawn(async move {
+                                            if let Err(e) = actions::restore_poh_backup(index, provider).await {
+                                                err.set(e);
+                                            }
+                                            busy.set(false);
+                                        });
+                                    },
+                                    "Re-publish saved badge"
+                                }
+                            }
+                        }
+                    }
                     if !pinned_for_provider.is_empty() {
                         label { "Tier / Epoch" }
                         div { class: "row",

@@ -508,6 +508,19 @@ fn dispatch_kv(payload: &[u8]) {
                         }
                     }
                 }
+            } else if let Some(rest) = key.strip_prefix("pohbackup:") {
+                if let Some((prov, idx_s)) = rest.split_once(':') {
+                    if let Ok(idx) = idx_s.parse::<u32>() {
+                        match value.as_deref() {
+                            Some(v) if !v.is_empty() => {
+                                POH_BACKUP.write().insert((idx, prov.to_string()), v.to_vec());
+                            }
+                            _ => {
+                                POH_BACKUP.write().remove(&(idx, prov.to_string()));
+                            }
+                        }
+                    }
+                }
             }
         }
         Ok(WhoiamDelegateResponse::Stored { key }) => {

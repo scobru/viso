@@ -45,6 +45,12 @@ pub static POH_PENDING: GlobalSignal<BTreeMap<(u32, String), PendingBlindState>>
 pub static POH_STAGED: GlobalSignal<BTreeMap<(u32, String), Vec<u8>>> =
     Signal::global(BTreeMap::new);
 
+/// Persistent local backup of a persona's verified `poh:<provider>` slot bytes in `viso-delegate`
+/// (`pohbackup:<provider>:<index>`) so an unpublished ("Remove badge") attestation can be re-published
+/// without hitting the Gatekeeper's 1-per-epoch nullifier limit.
+pub static POH_BACKUP: GlobalSignal<BTreeMap<(u32, String), Vec<u8>>> =
+    Signal::global(BTreeMap::new);
+
 /// Most recent node-level contract request error `(timestamp_ms, message)` so
 /// failed `Put`/`Update` calls fail fast with the real reason instead of
 /// hanging until `CONTRACT_ACK_TIMEOUT_MS`.
