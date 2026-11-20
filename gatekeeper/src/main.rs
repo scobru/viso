@@ -136,6 +136,7 @@ fn load_or_create_hmac_secret(data_dir: &Path) -> Result<Vec<u8>, String> {
     fs::create_dir_all(data_dir).map_err(|e| format!("create {}: {e}", data_dir.display()))?;
     let path = data_dir.join("hmac.secret");
     if path.exists() {
+        crate::core::restrict_secret(&path);
         let bytes = fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
         if bytes.len() < 32 {
             return Err("stored hmac.secret is too short".into());
