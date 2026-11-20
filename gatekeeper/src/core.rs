@@ -406,6 +406,20 @@ pub fn write_secret(path: &Path, bytes: &[u8]) -> Result<(), String> {
     f.write_all(bytes).and_then(|()| f.sync_all()).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
+/// Tighten an existing secret file to owner-only (0600 on Unix). Best effort: a read-only
+/// mount (e.g. a Docker secret) can't be changed, and that must not stop the gatekeeper.
+pub fn restrict_secret(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(0o600)) {
+            eprintln!("warning: could not chmod 600 {}: {e}", path.display());
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 /// Generate a fresh RSA-2048 keypair, write `<prefix>.pkcs8.der` and
 /// `<prefix>.spki.der` into `out_dir`, and return the SPKI DER bytes.
 pub fn generate_issuer_keypair(
@@ -544,6 +558,7 @@ pub fn load_issuer_from_config(cfg: &IssuerConfigJson) -> Result<ConfiguredIssue
             .or_else(|_| URL_SAFE_NO_PAD.decode(b64))
             .map_err(|e| format!("decode pkcs8_b64 for {}: {e}", cfg.key_id))?
     } else if let Some(path) = cfg.pkcs8_path.as_deref().filter(|s| !s.is_empty()) {
+        restrict_secret(Path::new(path));
         fs::read(path).map_err(|e| format!("read {path}: {e}"))?
     } else {
         return Err(format!("issuer {} must set pkcs8_path or pkcs8_b64", cfg.key_id));
@@ -573,6 +588,18 @@ pub fn purge_expired_pending(pending: &mut HashMap<String, PendingOAuth>, now_ms
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn restrict_secret_tightens_existing_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let p = std::env::temp_dir().join(format!("viso-restrict-{}", std::process::id()));
+        fs::write(&p, b"k").unwrap();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
+        super::restrict_secret(&p);
+        assert_eq!(fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        fs::remove_file(&p).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn write_secret_is_owner_only_and_never_overwrites() {
