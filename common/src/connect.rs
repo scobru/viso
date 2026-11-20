@@ -37,18 +37,54 @@ fn path_of(base: &str) -> Option<&str> {
     Some(&rest[rest.find('/')?..])
 }
 
-/// What the proof is bound to. An app may ask for a canonical `requested` base (its published certificate then
-/// shows no node host) when its path is the callback's: the path is what tells apps on one node apart.
-/// Anything else falls back to the callback's own origin+path.
-pub fn signing_base(return_base: &str, requested: Option<&str>) -> String {
-    match requested {
-        Some(r) if path_of(r).is_some() && path_of(r) == path_of(return_base) => r.to_string(),
+/// Returns `true` when `path` is a Freenet node web-container path (`/v1/contract/web/<id>/...` or `/v2/...`).
+pub fn is_contract_web_path(path: &str) -> bool {
+    ["/v1/contract/web/", "/v2/contract/web/"]
+        .iter()
+        .filter_map(|p| path.strip_prefix(p))
+        .any(|rest| rest.split('/').next().is_some_and(|id| !id.is_empty()))
+}
+
+/// What the proof is bound to when `same_node` tells us whether the callback URL shares our Freenet node origin.
+/// Same-node contract apps may swap the node host for a canonical `requested` base (so the published certificate
+/// keeps the user's LAN/custom node IP out of public logs) when the paths match. Foreign origins are NEVER
+/// permitted to swap hosts or claim a canonical Freenet base.
+pub fn signing_base_for(return_base: &str, requested: Option<&str>, same_node: bool) -> String {
+    if !same_node {
+        return return_base.to_string();
+    }
+    match (path_of(return_base), requested.and_then(|r| path_of(r).map(|p| (r, p)))) {
+        (Some(ret_path), Some((req, req_path)))
+            if is_contract_web_path(ret_path) && req_path == ret_path =>
+        {
+            req.to_string()
+        }
         _ => return_base.to_string(),
     }
 }
 
+/// What the proof is bound to. An app may ask for a canonical `requested` base (its published certificate then
+/// shows no node host) when its path is the callback's: the path is what tells apps on one node apart.
+/// Anything else falls back to the callback's own origin+path.
+pub fn signing_base(return_base: &str, requested: Option<&str>) -> String {
+    signing_base_for(return_base, requested, true)
+}
+
 pub fn sign_connect(sk: &SigningKey, return_base: &str, challenge: &str, time_ms: u64) -> Signature {
     sk.sign(&connect_message(&sk.verifying_key(), return_base, challenge, time_ms))
+}
+
+/// What an app secret ([`crate::derive::app_secret`]) is bound to.
+/// - For same-node Freenet apps (`same_node == true`): `contract/web/<id>` across hosts and `/v1`/`/v2`, or the path.
+/// - For foreign origins (`same_node == false`): the full `origin + path` (`return_base`), so an external site
+///   hosting `/v1/contract/web/<ID>/` can never collide with a node dApp's `contract/web/<ID>` scope or another origin.
+pub fn app_scope_for(return_base: &str, same_node: bool) -> Option<String> {
+    let _ = path_of(return_base)?;
+    if same_node {
+        app_scope(return_base)
+    } else {
+        Some(return_base.to_string())
+    }
 }
 
 /// What an app secret ([`crate::derive::app_secret`]) is bound to: `contract/web/<id>` for an app served by a
@@ -148,6 +184,29 @@ mod tests {
         assert_eq!(
             data_encoding::HEXLOWER.encode(&sig.to_bytes()),
             "122b675bdbc8772f52631524ac2b500dec76721bff7c0b299025df04e18e8e8ddf2b8d0a232a5785e68d5738be4f5111ae7b58106f5458b966b9b365fff5ac09",
+        );
+    }
+
+    #[test]
+    fn foreign_origin_cannot_swap_host_or_collide_contract_scope() {
+        let evil = "https://evil.example/v1/contract/web/App1/";
+        let canon = "http://127.0.0.1:7509/v1/contract/web/App1/";
+        let lan = "http://192.168.1.7:7509/v1/contract/web/App1/";
+
+        // Same-node contract app keeps canonical swap + contract/web/<id> scope.
+        assert_eq!(signing_base_for(lan, Some(canon), true), canon);
+        assert_eq!(app_scope_for(lan, true), Some("contract/web/App1".into()));
+
+        // Foreign origin spoofing /v1/contract/web/App1/ gets neither canonical base nor contract/web scope.
+        assert_eq!(signing_base_for(evil, Some(canon), false), evil);
+        let evil_scope = app_scope_for(evil, false);
+        assert_eq!(evil_scope, Some(evil.into()));
+        assert_ne!(evil_scope, app_scope_for(lan, true));
+
+        // Different foreign origins with identical path stay isolated.
+        assert_ne!(
+            app_scope_for("https://a.example/app", false),
+            app_scope_for("https://b.example/app", false),
         );
     }
 }

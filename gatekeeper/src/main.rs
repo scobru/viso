@@ -23,9 +23,14 @@ use tokio::sync::Mutex;
 use crate::core::{
     decode_blinded_msg, ensure_provider_issuer, generate_issuer_keypair, issue_blind_token,
     issue_google_blind_token, load_issuer_from_config, load_or_init_issuers_json, now_unix_ms,
-    now_unix_secs, purge_expired_pending, ConfiguredIssuer, GitHubUser, GoogleUser, IssueError,
-    IssuerConfigJson, NullifierStore, PendingOAuth, PublicIssuerInfo, MAX_PENDING_STATES,
+    now_unix_secs, purge_expired_pending, validate_blinded_msg, ConfiguredIssuer, GitHubUser,
+    GoogleUser, IssueError, IssuerConfigJson, NullifierStore, PendingOAuth, PublicIssuerInfo,
+    MAX_PENDING_STATES,
 };
+
+const RATE_WINDOW_MS: u64 = 10 * 60 * 1000;
+const RATE_MAX_REQS_PER_IP: usize = 30;
+const MAX_RATE_TRACKED_IPS: usize = 10_000;
 
 #[derive(Clone)]
 struct OAuthCreds {
@@ -42,6 +47,7 @@ struct AppState {
     issuers: HashMap<String, ConfiguredIssuer>,
     store: Mutex<NullifierStore>,
     pending: Mutex<HashMap<String, PendingOAuth>>,
+    rate_limits: Mutex<HashMap<String, Vec<u64>>>,
 }
 
 #[derive(Deserialize)]
@@ -225,6 +231,8 @@ async fn run_server() -> Result<(), String> {
     let state = Arc::new(AppState {
         http: reqwest::Client::builder()
             .user_agent("viso-gatekeeper/0.1")
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(15))
             .build()
             .map_err(|e| e.to_string())?,
         public_base_url,
@@ -234,6 +242,7 @@ async fn run_server() -> Result<(), String> {
         issuers,
         store: Mutex::new(store),
         pending: Mutex::new(HashMap::new()),
+        rate_limits: Mutex::new(HashMap::new()),
     });
 
     let app = Router::new()
@@ -292,6 +301,10 @@ async fn begin_oauth(
         ));
     }
     let blinded_msg = decode_blinded_msg(&q.blinded, issuer.modulus_bytes)
+        .and_then(|bytes| {
+            validate_blinded_msg(&bytes, issuer)?;
+            Ok(bytes)
+        })
         .map_err(|e| html_error(StatusCode::BAD_REQUEST, &e.to_string()))?;
 
     let mut rand_state = [0u8; 24];
@@ -393,10 +406,57 @@ fn finish_token_response(provider_label: &str, issuer: &ConfiguredIssuer, issued
     }
 }
 
+fn client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("x-real-ip")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("direct")
+        .chars()
+        .take(64)
+        .collect()
+}
+
+async fn check_rate_limit(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
+    let ip = client_ip(headers);
+    let now = now_unix_ms();
+    let cutoff = now.saturating_sub(RATE_WINDOW_MS);
+    let mut map = state.rate_limits.lock().await;
+    if map.len() >= MAX_RATE_TRACKED_IPS {
+        map.retain(|_, ts| {
+            ts.retain(|&t| t >= cutoff);
+            !ts.is_empty()
+        });
+    }
+    let entry = map.entry(ip).or_default();
+    entry.retain(|&t| t >= cutoff);
+    if entry.len() >= RATE_MAX_REQS_PER_IP {
+        return Err(html_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many verification attempts from this address. Please wait a few minutes and retry.",
+        ));
+    }
+    entry.push(now);
+    Ok(())
+}
+
 async fn github_start(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(q): Query<OAuthStartQuery>,
 ) -> Response {
+    if let Err(resp) = check_rate_limit(&state, &headers).await {
+        return resp;
+    }
     let Some(creds) = state.github.as_ref() else {
         return html_error(StatusCode::SERVICE_UNAVAILABLE, "GitHub OAuth is not configured on this gatekeeper.");
     };
@@ -465,8 +525,12 @@ async fn github_callback(
 
 async fn google_start(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(q): Query<OAuthStartQuery>,
 ) -> Response {
+    if let Err(resp) = check_rate_limit(&state, &headers).await {
+        return resp;
+    }
     let Some(creds) = state.google.as_ref() else {
         return html_error(StatusCode::SERVICE_UNAVAILABLE, "Google OAuth is not configured on this gatekeeper.");
     };
@@ -536,6 +600,14 @@ fn no_store_headers() -> HeaderMap {
     let mut h = HeaderMap::new();
     h.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
     h.insert(header::REFERRER_POLICY, "no-referrer".parse().unwrap());
+    h.insert(header::X_FRAME_OPTIONS, "DENY".parse().unwrap());
+    h.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
+    h.insert(
+        header::CONTENT_SECURITY_POLICY,
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            .parse()
+            .unwrap(),
+    );
     h
 }
 

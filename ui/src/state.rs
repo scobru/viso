@@ -62,8 +62,13 @@ pub static KEY_STORE_UNREACHABLE: GlobalSignal<bool> = Signal::global(|| false);
 pub struct ConnectRequest {
     /// Origin of the callback URL — what the user is shown.
     pub origin: String,
-    /// origin+path of the callback URL — what the proof is bound to (apps on
-    /// the same Freenet node share an origin; the path tells them apart).
+    /// Actual `origin + pathname` of the callback URL before any canonical host swap.
+    pub actual_return_base: String,
+    /// Pathname of the callback URL — shown in the consent prompt alongside origin.
+    pub return_path: String,
+    /// True only when the callback origin matches Viso's own Freenet node origin.
+    pub same_node: bool,
+    /// origin+path of the callback URL (or canonical swap for same-node dApps) — what the proof is bound to.
     pub return_base: String,
     pub return_url: String,
     pub challenge: String,

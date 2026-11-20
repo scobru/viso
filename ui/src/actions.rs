@@ -858,8 +858,8 @@ pub fn connect_ok_url(index: u32, req: &ConnectRequest, time_ms: u64) -> Result<
     let hex = |b: &[u8]| data_encoding::HEXLOWER.encode(b);
 
     let (challenge_to_sign, fragment) = if req.request_key {
-        let scope = viso_core::connect::app_scope(&req.return_base)
-            .unwrap_or_else(|| "/".to_string());
+        let scope = viso_core::connect::app_scope_for(&req.actual_return_base, req.same_node)
+            .ok_or("invalid callback URL for app key")?;
         let sec = viso_core::derive::app_secret(&sk, &scope);
         let app_sk = ed25519_dalek::SigningKey::from_bytes(&sec);
         let app_pk = app_sk.verifying_key();
@@ -985,6 +985,9 @@ mod tests {
             *crate::state::SEED_LOADED.write() = Some(Some(SEED));
             let req = crate::state::ConnectRequest {
                 origin: "http://127.0.0.1:7509".into(),
+                actual_return_base: "http://127.0.0.1:7509/v1/contract/web/OrtoApp/".into(),
+                return_path: "/v1/contract/web/OrtoApp/".into(),
+                same_node: true,
                 return_base: "http://127.0.0.1:7509/v1/contract/web/OrtoApp/".into(),
                 return_url: "http://127.0.0.1:7509/v1/contract/web/OrtoApp/".into(),
                 challenge: "1234567890abcdef".into(),
@@ -996,6 +999,22 @@ mod tests {
             assert!(url.contains("#esk="));
             assert!(!url.contains("sk="), "plaintext secret must not be in the url");
             assert!(url.contains("challenge=wd1."));
+
+            // Foreign origin spoofing the same path must derive a completely different delegated key
+            let foreign_req = crate::state::ConnectRequest {
+                origin: "https://evil.example".into(),
+                actual_return_base: "https://evil.example/v1/contract/web/OrtoApp/".into(),
+                return_path: "/v1/contract/web/OrtoApp/".into(),
+                same_node: false,
+                return_base: "https://evil.example/v1/contract/web/OrtoApp/".into(),
+                return_url: "https://evil.example/v1/contract/web/OrtoApp/".into(),
+                challenge: "1234567890abcdef".into(),
+                request_key: true,
+                client_epk: req.client_epk,
+            };
+            let foreign_url = super::connect_ok_url(0, &foreign_req, 1000).unwrap();
+            let app_pk_of = |u: &str| u.split("challenge=wd1.").nth(1).unwrap().split('.').next().unwrap().to_string();
+            assert_ne!(app_pk_of(&url), app_pk_of(&foreign_url));
             VNode::empty()
         }
         let mut dom = VirtualDom::new(test_app);

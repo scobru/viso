@@ -171,13 +171,21 @@ pub fn connect_request_from_location() -> Option<ConnectRequest> {
             return None;
         }
 
-        let return_base = format!("{}{}", url.origin(), url.pathname());
-        let return_base = viso_core::connect::signing_base(&return_base, get_val("base").as_deref());
+        let actual_return_base = format!("{}{}", url.origin(), url.pathname());
+        let return_path = url.pathname();
+        // location.origin is "null" inside Freenet's opaque sandbox iframe; derive Viso's real origin from href.
+        let own_origin = web_sys::Url::new(&href).ok().map(|u| u.origin());
+        let same_node = own_origin.as_deref() == Some(url.origin().as_str());
+        let return_base =
+            viso_core::connect::signing_base_for(&actual_return_base, get_val("base").as_deref(), same_node);
 
-        api::log(&format!("[viso] connect request validated: origin='{}', return_base='{}{}', return_url='{return_url}', challenge='{challenge}', request_key={request_key}", url.origin(), url.origin(), url.pathname()));
+        api::log(&format!("[viso] connect request validated: origin='{}', path='{return_path}', same_node={same_node}, return_base='{return_base}', return_url='{return_url}', challenge='{challenge}', request_key={request_key}", url.origin()));
 
         Some(ConnectRequest {
             origin: url.origin(),
+            actual_return_base,
+            return_path,
+            same_node,
             return_base,
             return_url,
             challenge,
@@ -699,6 +707,10 @@ fn ConnectView() -> Element {
     let mut sent = use_signal(|| None::<(String, bool)>);
     let mut error = use_signal(String::new);
     let origin = req.origin.clone();
+    let return_path = req.return_path.clone();
+    let same_node = req.same_node;
+    let derived_scope = viso_core::connect::app_scope_for(&req.actual_return_base, same_node)
+        .unwrap_or_else(|| req.actual_return_base.clone());
     let deny_req = req.clone();
 
     if let Some((msg, in_tab)) = sent.read().clone() {
@@ -720,11 +732,20 @@ fn ConnectView() -> Element {
                 h2 { "Share a persona?" }
                 p {
                     strong { "{origin}" }
+                    " "
+                    code { "{return_path}" }
                     " wants to know who you are."
+                }
+                if !same_node {
+                    p { class: "muted",
+                        "External site notice: this callback goes outside your Freenet node."
+                    }
                 }
                 p { class: "muted",
                     if req.request_key {
-                        "Sharing connects your persona and derives a sovereign encryption key for this app from your Viso seed. Your workspace will sync across all your devices using this persona."
+                        "Sharing connects your persona and derives a sovereign encryption key scoped to "
+                        code { "{derived_scope}" }
+                        " from your Viso seed. Your workspace will sync across all your devices using this persona."
                     } else {
                         "Sharing sends a signed proof that you own the persona. The site learns its public key (and can read its public profile) — nothing else."
                     }

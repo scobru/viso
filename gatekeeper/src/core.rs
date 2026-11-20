@@ -51,6 +51,7 @@ pub struct ConfiguredIssuer {
     pub min_public_repos: u64,
     pub spki_der: Vec<u8>,
     pub modulus_bytes: usize,
+    pub modulus_be: Vec<u8>,
     pub sk: SecretKey,
 }
 
@@ -280,6 +281,30 @@ pub fn decode_blinded_msg(blinded_b64: &str, expected_len: usize) -> Result<Vec<
     Ok(bytes)
 }
 
+/// Validate mathematically that `0 < blinded_msg < N` (in big-endian unsigned form)
+/// before touching persistent nullifier state, so malformed requests cannot burn
+/// a user's epoch nullifier.
+pub fn validate_blinded_msg(blinded_msg: &[u8], issuer: &ConfiguredIssuer) -> Result<(), IssueError> {
+    if blinded_msg.len() != issuer.modulus_bytes {
+        return Err(IssueError::BadRequest(format!(
+            "blinded message length {} does not match RSA modulus size {}",
+            blinded_msg.len(),
+            issuer.modulus_bytes
+        )));
+    }
+    if blinded_msg.iter().all(|&b| b == 0) {
+        return Err(IssueError::BadRequest(
+            "blinded message must be non-zero".into(),
+        ));
+    }
+    if blinded_msg >= issuer.modulus_be.as_slice() {
+        return Err(IssueError::BadRequest(
+            "blinded message must be strictly less than RSA modulus".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn issue_verified_blind_token(
     store: &mut NullifierStore,
     hmac_secret: &[u8],
@@ -289,6 +314,7 @@ fn issue_verified_blind_token(
     now_secs: u64,
     account_label: &str,
 ) -> Result<String, IssueError> {
+    validate_blinded_msg(blinded_msg, issuer)?;
     let nullifier = compute_nullifier_id(hmac_secret, &issuer.provider, &issuer.epoch, account_id);
     if store.contains(&nullifier) {
         return Err(IssueError::AlreadyClaimed(format!(
@@ -515,6 +541,7 @@ pub fn load_issuer_from_config(cfg: &IssuerConfigJson) -> Result<ConfiguredIssue
     let sk = SecretKey::from_der(&der).map_err(|e| format!("bad RSA key for {}: {e}", cfg.key_id))?;
     let pk = sk.public_key().map_err(|e| format!("derive pk: {e}"))?;
     let modulus_bytes = pk.as_ref().size();
+    let modulus_be = pk.as_ref().n().to_bytes_be();
     let spki_der = pk.to_der().map_err(|e| format!("pk to_der: {e}"))?;
     Ok(ConfiguredIssuer {
         key_id: cfg.key_id.clone(),
@@ -525,6 +552,7 @@ pub fn load_issuer_from_config(cfg: &IssuerConfigJson) -> Result<ConfiguredIssue
         min_public_repos: cfg.min_public_repos,
         spki_der,
         modulus_bytes,
+        modulus_be,
         sk,
     })
 }
@@ -542,6 +570,7 @@ mod tests {
     fn fixture_issuer(key_id: &str, tier: &str, epoch: &str, min_repos: u64) -> ConfiguredIssuer {
         let kp = KeyPair::generate(&mut OsRng, 2048).unwrap();
         let spki_der = kp.pk.to_der().unwrap();
+        let modulus_be = kp.pk.as_ref().n().to_bytes_be();
         ConfiguredIssuer {
             key_id: key_id.into(),
             provider: "github".into(),
@@ -551,6 +580,7 @@ mod tests {
             min_public_repos: min_repos,
             spki_der,
             modulus_bytes: 256,
+            modulus_be,
             sk: kp.sk,
         }
     }
@@ -766,6 +796,7 @@ mod tests {
             min_public_repos: 0,
             spki_der: kp_v.pk.to_der().unwrap(),
             modulus_bytes: kp_v.pk.as_ref().size(),
+            modulus_be: kp_v.pk.as_ref().n().to_bytes_be(),
             sk: kp_v.sk,
         };
         let kp_next = KeyPair::generate(&mut OsRng, 2048).unwrap();
@@ -778,6 +809,7 @@ mod tests {
             min_public_repos: 0,
             spki_der: kp_next.pk.to_der().unwrap(),
             modulus_bytes: kp_next.pk.as_ref().size(),
+            modulus_be: kp_next.pk.as_ref().n().to_bytes_be(),
             sk: kp_next.sk,
         };
         let viso_issuers = vec![
@@ -847,6 +879,50 @@ mod tests {
         let t2 = issue_google_blind_token(&mut store, hmac_secret, &iss_next, &user, &b2_bytes, now_secs).unwrap();
         let s2 = finalize_attestation(&t2, &p2, &viso_issuers).unwrap();
         assert_eq!(verify_attestation_with(&s2, &persona_pk, &viso_issuers).unwrap().epoch, "2027");
+
+        let _ = fs::remove_file(&log_path);
+    }
+
+    #[test]
+    fn malformed_blinded_msg_rejected_without_burning_nullifier() {
+        let log_path = temp_log("malformed-blinded");
+        let mut store = NullifierStore::open(&log_path).unwrap();
+        let iss = fixture_issuer("github:age1y:2026", "age1y", "2026", 0);
+        let viso_iss = [PohIssuer {
+            key_id: &iss.key_id,
+            provider: "github",
+            tier: "age1y",
+            epoch: "2026",
+            spki_der: &iss.spki_der,
+        }];
+        let hmac_secret = b"test-hmac-secret-at-least-32-bytes-long!";
+        let now_secs = 1_800_000_000u64;
+        let user = GitHubUser {
+            id: 777_888,
+            user_type: "User".into(),
+            created_at: "2020-01-01T00:00:00Z".into(),
+            public_repos: 5,
+        };
+
+        // 0xFF..FF >= RSA modulus N: must be rejected before recording nullifier
+        let over_mod = vec![0xFFu8; iss.modulus_bytes];
+        assert!(matches!(
+            issue_blind_token(&mut store, hmac_secret, &iss, &user, &over_mod, now_secs),
+            Err(IssueError::BadRequest(_))
+        ));
+        // Zero message must also be rejected before recording nullifier
+        let zero_msg = vec![0u8; iss.modulus_bytes];
+        assert!(matches!(
+            issue_blind_token(&mut store, hmac_secret, &iss, &user, &zero_msg, now_secs),
+            Err(IssueError::BadRequest(_))
+        ));
+
+        // Legitimate request for the exact same user still succeeds afterwards!
+        let (blinded_b64, pending) = blind_request(&mut OsRng, &viso_iss[0], &[5u8; 32]).unwrap();
+        let blinded = decode_blinded_msg(&blinded_b64, iss.modulus_bytes).unwrap();
+        let tok = issue_blind_token(&mut store, hmac_secret, &iss, &user, &blinded, now_secs).unwrap();
+        let slot = finalize_attestation(&tok, &pending, &viso_iss).unwrap();
+        assert_eq!(verify_attestation_with(&slot, &[5u8; 32], &viso_iss).unwrap().tier, "age1y");
 
         let _ = fs::remove_file(&log_path);
     }
