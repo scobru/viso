@@ -262,14 +262,8 @@ fn leave_to(url: &str) -> Result<bool, String> {
     ] {
         js_sys::Reflect::set(&msg, &k.into(), &v).map_err(|_| "message build failed")?;
     }
-    let target_origin = win
-        .location()
-        .origin()
-        .ok()
-        .filter(|o| !o.is_empty() && o != "null")
-        .unwrap_or_else(|| "*".into());
     parent
-        .post_message(&msg, &target_origin)
+        .post_message(&msg, &own.origin()) // the URL carries the sealed connect result: only the node's shell may read it
         .map_err(|_| "shell bridge unreachable")?;
     Ok(true)
 }
