@@ -144,7 +144,7 @@ fn load_or_create_hmac_secret(data_dir: &Path) -> Result<Vec<u8>, String> {
     }
     let mut secret = vec![0u8; 32];
     OsRng.fill_bytes(&mut secret);
-    fs::write(&path, &secret).map_err(|e| format!("write {}: {e}", path.display()))?;
+    crate::core::write_secret(&path, &secret)?;
     Ok(secret)
 }
 

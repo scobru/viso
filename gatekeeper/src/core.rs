@@ -396,6 +396,16 @@ pub fn issue_google_blind_token(
     )
 }
 
+/// Write a secret file readable by its owner only (0600 on Unix), never over an existing one.
+pub fn write_secret(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut opts = OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    let mut f = opts.open(path).map_err(|e| format!("create {}: {e}", path.display()))?;
+    f.write_all(bytes).and_then(|()| f.sync_all()).map_err(|e| format!("write {}: {e}", path.display()))
+}
+
 /// Generate a fresh RSA-2048 keypair, write `<prefix>.pkcs8.der` and
 /// `<prefix>.spki.der` into `out_dir`, and return the SPKI DER bytes.
 pub fn generate_issuer_keypair(
@@ -415,7 +425,7 @@ pub fn generate_issuer_keypair(
     let kp = KeyPair::generate(&mut OsRng, 2048).map_err(|e| format!("keygen: {e}"))?;
     let sk_der = kp.sk.to_der().map_err(|e| format!("sk to_der: {e}"))?;
     let pk_der = kp.pk.to_der().map_err(|e| format!("pk to_der: {e}"))?;
-    fs::write(&sk_path, &sk_der).map_err(|e| format!("write {}: {e}", sk_path.display()))?;
+    write_secret(&sk_path, &sk_der)?;
     fs::write(&pk_path, &pk_der).map_err(|e| format!("write {}: {e}", pk_path.display()))?;
     Ok((sk_path, pk_path, pk_der))
 }
@@ -563,6 +573,19 @@ pub fn purge_expired_pending(pending: &mut HashMap<String, PendingOAuth>, now_ms
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn write_secret_is_owner_only_and_never_overwrites() {
+        use std::os::unix::fs::PermissionsExt;
+        let p = std::env::temp_dir().join(format!("viso-secret-{}", std::process::id()));
+        let _ = fs::remove_file(&p);
+        super::write_secret(&p, b"k").unwrap();
+        assert_eq!(fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(super::write_secret(&p, b"x").is_err());
+        assert_eq!(fs::read(&p).unwrap(), b"k");
+        fs::remove_file(&p).unwrap();
+    }
+
     use super::*;
     use blind_rsa_signatures::KeyPair;
     use viso_core::poh::{blind_request, finalize_attestation, verify_attestation_with, PohIssuer};
