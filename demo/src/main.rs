@@ -167,32 +167,41 @@ async fn connect_ws(owner: VerifyingKey) -> Result<(), String> {
 }
 
 fn apply_contract(owner: &VerifyingKey, expected: &ContractKey, response: ContractResponse) {
-    let bytes = match response {
-        ContractResponse::GetResponse { key, state, .. } if key.id() == expected.id() => state,
+    let parts: Vec<WrappedState> = match response {
+        ContractResponse::GetResponse { key, state, .. } if key.id() == expected.id() => vec![state],
         ContractResponse::UpdateNotification { key, update } if key.id() == expected.id() => {
             match update {
-                UpdateData::State(s) => WrappedState::new(s.into_bytes()),
-                UpdateData::Delta(d) => WrappedState::new(d.into_bytes()),
-                UpdateData::StateAndDelta { state, .. } => WrappedState::new(state.into_bytes()),
+                UpdateData::State(s) => vec![WrappedState::new(s.into_bytes())],
+                UpdateData::Delta(d) => vec![WrappedState::new(d.into_bytes())],
+                UpdateData::StateAndDelta { state, delta } => vec![
+                    WrappedState::new(state.into_bytes()),
+                    WrappedState::new(delta.into_bytes()),
+                ],
                 _ => return,
             }
         }
         _ => return,
     };
     let mut current = PROFILE.peek().clone().unwrap_or_default();
-    if bytes.as_ref().is_empty() {
+    if parts.iter().all(|b| b.as_ref().is_empty()) {
         // Real answer: contract exists, nothing published yet.
         *PROFILE.write() = Some(current);
         return;
     }
-    match viso_core::from_cbor::<IdentityStateV1>(bytes.as_ref()) {
-        // Untrusted bytes: merge_state re-verifies every slot signature
-        // against the proven key before anything is displayed.
-        Ok(incoming) => match merge_state(&mut current, &incoming, owner, now_ms_native()) {
-            Ok(_) => *PROFILE.write() = Some(current),
-            Err(e) => log(&format!("rejected identity state: {e}")),
-        },
-        Err(e) => log(&format!("bad identity state: {e}")),
+    let mut updated = false;
+    for bytes in parts.iter().filter(|b| !b.as_ref().is_empty()) {
+        match viso_core::from_cbor::<IdentityStateV1>(bytes.as_ref()) {
+            // Untrusted bytes: merge_state re-verifies every slot signature
+            // against the proven key before anything is displayed.
+            Ok(incoming) => match merge_state(&mut current, &incoming, owner, now_ms_native()) {
+                Ok(_) => updated = true,
+                Err(e) => log(&format!("rejected identity state: {e}")),
+            },
+            Err(e) => log(&format!("bad identity state: {e}")),
+        }
+    }
+    if updated {
+        *PROFILE.write() = Some(current);
     }
 }
 

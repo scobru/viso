@@ -262,8 +262,14 @@ fn leave_to(url: &str) -> Result<bool, String> {
     ] {
         js_sys::Reflect::set(&msg, &k.into(), &v).map_err(|_| "message build failed")?;
     }
+    let target_origin = win
+        .location()
+        .origin()
+        .ok()
+        .filter(|o| !o.is_empty() && o != "null")
+        .unwrap_or_else(|| "*".into());
     parent
-        .post_message(&msg, "*")
+        .post_message(&msg, &target_origin)
         .map_err(|_| "shell bridge unreachable")?;
     Ok(true)
 }
@@ -510,9 +516,9 @@ pub fn App() -> Element {
             " · "
             button { onclick: move |_| *VIEW.write() = View::Import, "import" }
             " · "
-            a { href: "https://github.com/scobru/viso/blob/main/docs/dapp-integration.md", target: "_blank", "docs" }
+            a { href: "https://github.com/scobru/viso/blob/main/docs/dapp-integration.md", target: "_blank", rel: "noopener noreferrer", "docs" }
             " · "
-            a { href: "https://github.com/scobru/viso", target: "_blank", "source" }
+            a { href: "https://github.com/scobru/viso", target: "_blank", rel: "noopener noreferrer", "source" }
         }
     }
 }
@@ -2224,7 +2230,7 @@ fn PersonaPohCard(index: u32, provider: &'static str) -> Element {
                                                             confirm_reset.set(false);
                                                             #[cfg(target_arch = "wasm32")]
                                                             if let Some(win) = web_sys::window() {
-                                                                let _ = win.open_with_url_and_target(&url, "_blank");
+                                                                let _ = win.open_with_url_and_target_and_features(&url, "_blank", "noopener,noreferrer");
                                                             }
                                                         }
                                                         Err(e) => err.set(e),

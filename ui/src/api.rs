@@ -355,7 +355,10 @@ fn dispatch_contract(response: ContractResponse) {
         ContractResponse::UpdateNotification { key, update } => match update {
             UpdateData::State(s) => apply_contract_bytes(&key, s.as_ref()),
             UpdateData::Delta(d) => apply_contract_bytes(&key, d.as_ref()),
-            UpdateData::StateAndDelta { state, .. } => apply_contract_bytes(&key, state.as_ref()),
+            UpdateData::StateAndDelta { state, delta } => {
+                apply_contract_bytes(&key, state.as_ref());
+                apply_contract_bytes(&key, delta.as_ref());
+            }
             _ => {}
         },
         // Write confirmations: actions wait on these counters before
